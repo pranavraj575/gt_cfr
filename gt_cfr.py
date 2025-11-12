@@ -4,6 +4,7 @@ from collections import OrderedDict
 
 from regret_minimizer import *
 
+
 class Node:
     def __init__(self,
                  parent,
@@ -149,10 +150,9 @@ class PyspielStateStructure(StateStructure):
         return self.state.legal_actions()
 
 
-
 class GTCFR:
     def __init__(self, root_state: StateStructure,
-                 rm_class:RegretMinimizer=RegretMatchingPlus,
+                 rm_class: RegretMinimizer = RegretMatchingPlus,
                  rm_kwargs=None):
         self.root_state = root_state
         self.rm_class = rm_class
@@ -444,6 +444,36 @@ class GTCFR:
         else:
             return behavioral
 
+    def constant_sum_nash_gap(self, player_strategies, sequential_form=False, constant_for_constant_sum=0):
+        # assumes constant (zero) sum
+        gap = 0
+        for player in player_strategies:
+            gap += self.best_response_value(player=player, other_player_strategies=player_strategies, sequential_form=sequential_form)
+        return gap - constant_for_constant_sum
+
+    def best_response_value(self, player, other_player_strategies, sequential_form=False):
+        utilities = self.compute_utilities(player=player, other_player_strategies=other_player_strategies, sequential_form=sequential_form)
+        for infoset_id, (node, parent_sequence) in reversed(self.tfsdps[player].items()):
+            max_ev = max(utilities[(infoset_id, a)] for a in node.legal_actions)
+            utilities[parent_sequence] = utilities.get(parent_sequence, 0.) + max_ev
+        # None is the root node, which will collect the overall best response value
+        return utilities[None]
+
+    def best_response_strategy(self, player, other_player_strategies, sequential_form=False, return_sequential_form=False):
+        utilities = self.compute_utilities(player=player, other_player_strategies=other_player_strategies, sequential_form=sequential_form)
+        strategy = dict()
+        for infoset_id, (node, parent_sequence) in reversed(self.tfsdps[player].items()):
+            strategy[infoset_id] = {a: 0. for a in node.legal_actions}
+            best_action = max(node.legal_actions, key=lambda a: utilities[(infoset_id, a)])
+            strategy[infoset_id][best_action] = 1.
+
+            max_ev = utilities[(infoset_id, best_action)]
+
+            utilities[parent_sequence] = utilities.get(parent_sequence, 0.) + max_ev
+        if return_sequential_form:
+            strategy = self.convert_to_sequence_form(player=player, behavioral_strat=strategy)
+        return strategy
+
     def uniform_behavioral_strategy(self, player, sequence_form=False):
         """
         produces a uniform strategy for a given player
@@ -487,10 +517,10 @@ class GTCFR:
 
 
 if __name__ == '__main__':
-    game = pyspiel.load_game('leduc_poker')
+    game = pyspiel.load_game('kuhn_poker')
 
     gtcfr = GTCFR(root_state=PyspielStateStructure(game.new_initial_state()))
-    for _ in range(100):
+    for _ in range(500):
         node, action = gtcfr.sample_leaf_spot(player_bhv_strategies={i: gtcfr.obtain_strategy(player=i) for i in [0, 1]})
         state = gtcfr.state_of(node)
         if not node.terminal:
@@ -503,14 +533,16 @@ if __name__ == '__main__':
     gtcfr.create_full_tree()
     print('full tree size:', gtcfr.count_nodes())
     print('num infosets:', {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()})
+    br_value = gtcfr.best_response_value(player=0, other_player_strategies={1: gtcfr.uniform_behavioral_strategy(player=1)})
+    print('p0 best response value against uniform:', br_value)
 
     sum_sq_0 = dict()
     sum_sq_1 = dict()
     accumulated_weight = 0.
-    for i in range(1000):
+    for i in range(100):
         bhv_0 = gtcfr.obtain_strategy(player=0)
         bhv_1 = gtcfr.obtain_strategy(player=1)
-        #bhv_1 = gtcfr.uniform_behavioral_strategy(player=1)
+        # bhv_1 = gtcfr.uniform_behavioral_strategy(player=1)
         u0 = gtcfr.compute_utilities(player=0, other_player_strategies={1: bhv_1})
 
         gtcfr.observe_utility(player=0, utility=u0)
@@ -525,8 +557,47 @@ if __name__ == '__main__':
         accumulated_weight += 1
         avg_sq_0 = {k: v/accumulated_weight for (k, v) in sum_sq_0.items()}
         avg_sq_1 = {k: v/accumulated_weight for (k, v) in sum_sq_1.items()}
-        value = gtcfr.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
-        print(value)
+        value0 = gtcfr.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
+        gap = gtcfr.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
+        print(i, 'nash gap', gap, 'p0 value', value0)
+
+    player = 0
+    opp_policies = {0: sum_sq_0, 1: sum_sq_1}
+    opp_policies = {p: {k: v/accumulated_weight for (k, v) in policy.items()}
+                    for p, policy in opp_policies.items()
+                    }
+    while True:
+        s = PyspielStateStructure(game.new_initial_state())
+        while not s.is_terminal():
+            if s.is_chance_node():
+                o = s.chance_outcomes()
+                action = np.random.choice([a for a, _ in o.items()], p=[prob for _, prob in o.items()])
+            elif s.current_player() == player:
+                print(s.state.observation_string())
+                for a in s.legal_actions():
+                    print(str(a) + ':', s.state.action_to_string(a))
+                action = None
+                while True:
+                    action = input('type action:')
+                    if action in [str(a) for a in s.legal_actions()]:
+                        break
+                    else:
+                        print('bad choice, try again')
+                for a in s.legal_actions():
+                    if str(a) == action:
+                        action = a
+            else:
+                j = s.get_infoset_id()
+
+                policy = {a: opp_policies[s.current_player()][(j, a)] for a in s.legal_actions()}
+                p = np.array([prob for _, prob in policy.items()])
+
+                action = np.random.choice([a for a, _ in policy.items()], p=p/np.sum(p))
+            s.apply_action(action=action)
+
+        print('your result:', s.returns()[player])
+        if input('quit [y/n]: ').lower() == 'y':
+            break
     quit()
 
     node = gtcfr.root
