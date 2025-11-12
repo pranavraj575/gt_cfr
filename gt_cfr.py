@@ -1,6 +1,8 @@
 import pyspiel
 import numpy as np
+from collections import OrderedDict
 
+from regret_minimizer import *
 
 class Node:
     def __init__(self,
@@ -114,7 +116,7 @@ class PyspielStateStructure(StateStructure):
     def get_infoset_id(self):
         player = self.state.current_player()
         if player >= 0:
-            return self.state.observation_string()
+            return self.state.information_state_string()
         else:
             return None
 
@@ -147,45 +149,11 @@ class PyspielStateStructure(StateStructure):
         return self.state.legal_actions()
 
 
-class RegretMatching(object):
-    def __init__(self, action_set, **kwargs):
-        self.action_set = set(action_set)
-        self.cum_regrets = {a: 0. for a in self.action_set}
-        self.last_strat = None
-
-    def next_strategy(self):
-        # You might want to return a dictionary mapping each action in
-        # `self.action_set` to the probability of picking that action
-        sum_regrets = sum(max(self.cum_regrets[a], 0) for a in self.action_set)
-        if sum_regrets == 0:
-            self.last_strat = {
-                a: 1/len(self.action_set)
-                for a in self.action_set
-            }
-        else:
-            self.last_strat = {
-                a: max(self.cum_regrets[a], 0)/sum_regrets
-                for a in self.action_set
-            }
-
-        return self.last_strat.copy()
-
-    def observe_utility(self, utility):
-        assert isinstance(utility, dict) and utility.keys() == self.action_set
-
-        # <x,u>
-        ute = sum(self.last_strat[a]*utility[a] for a in self.action_set)
-
-        # r^t = r^{t-1} + (u-<x,u>1)
-        self.cum_regrets = {
-            # instant regret is u-<x,u>1, at dimension a this is u[a]-<x,u>
-            a: self.cum_regrets[a] + (utility[a] - ute)
-            for a in self.action_set
-        }
-
 
 class GTCFR:
-    def __init__(self, root_state: StateStructure, rm_class=RegretMatching, rm_kwargs=None):
+    def __init__(self, root_state: StateStructure,
+                 rm_class:RegretMinimizer=RegretMatchingPlus,
+                 rm_kwargs=None):
         self.root_state = root_state
         self.rm_class = rm_class
         self.rm_kwargs = rm_kwargs
@@ -203,10 +171,14 @@ class GTCFR:
                          )
         if self.root.is_chance_node():
             self.root.update_data(chance_outcomes=self.root_state.chance_outcomes())
-        self.top_down_order = [self.root]
+
         # dict of player -> tfsdp
-        # tfsdp is (infoset id) -> list of (node, parent sequence) in topdown order
+        # tfsdp is an ORDERED DICT (infoset id) -> (representative node, parent sequence)
+        #  in topdown order
         self.tfsdps = dict()
+
+        self.maybe_add_to_tfsdp(self.root)
+
         # dict of player -> (infoset id -> regret minimizer)
         self.player_to_regret_minimizers = dict()
         self.maybe_add_regret_minimizer(state=root_state)
@@ -219,8 +191,10 @@ class GTCFR:
 
             infoset_id = state.get_infoset_id()
             if infoset_id not in self.player_to_regret_minimizers[player]:
-                self.player_to_regret_minimizers[player][infoset_id] = self.rm_class(action_set=state.legal_actions(),
-                                                                                     **self.rm_kwargs)
+                rm = self.rm_class(action_set=state.legal_actions(),
+                                   **self.rm_kwargs)
+                self.player_to_regret_minimizers[player][infoset_id] = rm
+                return rm
 
     def sample_leaf_spot(self, player_bhv_strategies):
         """
@@ -276,8 +250,7 @@ class GTCFR:
         # equivalent to normal CFR, where V[j] = sum_a b_j[a]*Q[(j,a)] for decision nodes, and signal nodes are ignored
         # also this has nicely that Q[(j,a)] = u[(j,a)]+V[rho(j,a)]
         #  this is done to avoid the need for explicit signal nodes
-
-        for node, parent_sequence in tfsdp[::-1]:
+        for infoset_id, (node, parent_sequence) in reversed(tfsdp.items()):
             # adds u[(j,a)] to whatever is in Q[(j,a)]
             for a in node.legal_actions:
                 seq = (node.infoset_id, a)
@@ -293,21 +266,33 @@ class GTCFR:
                 V_infoset = sum(last_local_strategy[a]*Q[(node.infoset_id, a)] for a in node.legal_actions)
                 Q[parent_sequence] = Q.get(parent_sequence, 0.) + V_infoset
 
-        for node, _ in tfsdp:
-            j=node.infoset_id
-            ute = {a:Q[(j,a)] for a in node.legal_actions}
-            self.player_to_regret_minimizers[player][j].observe_utility(utility=ute)
+        for infoset_id, (node, _) in tfsdp.items():
+            ute = {a: Q[(infoset_id, a)] for a in node.legal_actions}
+            self.player_to_regret_minimizers[player][infoset_id].observe_utility(utility=ute)
 
-    def compute_utilities(self, player, other_player_bhv_strategies):
+    def compute_player_value(self, player, player_sequential_strategies):
+        terminal_seq_utilities = self.compute_utilities(player=player,
+                                                        other_player_strategies=player_sequential_strategies,
+                                                        sequential_form=True)
+        sq_strat = player_sequential_strategies[player]
+        return sum(sq_strat[terminal_seq]*ute for terminal_seq, ute in terminal_seq_utilities.items())
+
+    def compute_utilities(self, player, other_player_strategies, sequential_form=False):
         """
         :param player: player i that is observing utilities given the current game tree and strategies of other players
-        :param other_player_bhv_strategies: for each player j!=i, other_player_strategies[j][infoset id of j] is a policy for this infoset
-            IS BEHAVIORAL
+        :param other_player_strategies: for each player j!=i, other_player_strategies[j][infoset id of j] is a policy for this infoset
+            IS BEHAVIORAL BY DEFAULT
         :return:
         """
         # utilities for player i at terminal sequences
         terminal_sequence_utilities = dict()
-        frontier = [(self.root, 1.)]
+        if sequential_form:
+            # stores node, dictionary of opponent -> opponent reach probability
+            frontier = [(self.root, dict())]
+        else:
+            # stores node, product of all opponent reach probabilities to that node
+            frontier = [(self.root, 1.)]
+
         while frontier:
             node, opponent_reach_prob = frontier.pop()
             if node.terminal:
@@ -316,14 +301,27 @@ class GTCFR:
                 if parent_seq is not None:
                     utility = node.data['returns'][player] if 'returns' in node.data else 0.
                     # multiply utility by the probability that opponents and chance reach it
+                    # if sequential form and multiplayer, we will need to take the product of opponent reach probabilities
+                    if sequential_form:
+                        temp = 1
+                        for _, v in opponent_reach_prob.items():
+                            temp = temp*v
+                        opponent_reach_prob = temp
+                    # if behavioral, we directly store the product, so we just need to multiply by the chance reach probability
                     external_reach_prob = opponent_reach_prob*node.reach_prob_chance
                     terminal_sequence_utilities[parent_seq] = external_reach_prob*utility + terminal_sequence_utilities.get(parent_seq, 0.)
+                continue
             else:
                 for action in node.legal_actions:
                     # compute the opponent reach prob of taking action from node
                     if node.player >= 0 and node.player != player:
-                        # behavioral, multiply opponent reach prob by probability opponent chooses this
-                        child_opponent_reach_prob = opponent_reach_prob*other_player_bhv_strategies[node.player][node.infoset_id][action]
+                        if sequential_form:
+                            child_opponent_reach_prob = opponent_reach_prob.copy()
+                            # set this to node.player's strategy at sequence (j,action), as this is reach probability for this opponent
+                            child_opponent_reach_prob[node.player] = other_player_strategies[node.player][(node.infoset_id, action)]
+                        else:
+                            # behavioral, multiply opponent reach prob by probability opponent chooses this
+                            child_opponent_reach_prob = opponent_reach_prob*other_player_strategies[node.player][node.infoset_id][action]
                     else:
                         # chance node or player node, opponent reach prob is unchanged
                         child_opponent_reach_prob = opponent_reach_prob
@@ -333,8 +331,14 @@ class GTCFR:
                         frontier.append((node.children[action], child_opponent_reach_prob))
                     else:
                         # this action reaches outside the tree
-
                         # compute the external reach probability of node
+                        if sequential_form:
+                            # if sequuential, produce the opponent reach probability by doing this product
+                            temp = 1.
+                            for _, v in child_opponent_reach_prob.items():
+                                temp *= v
+                            child_opponent_reach_prob = temp
+                        # otherwise, the opponent reach probability is already this product, and we multiply by chance reach probability
                         external_reach_prob = child_opponent_reach_prob*node.reach_prob_chance
                         if node.is_chance_node():
                             external_reach_prob = external_reach_prob*node.data['chance_outcomes'][action]
@@ -378,13 +382,17 @@ class GTCFR:
             leaf.update_data(chance_outcomes=state_prime.chance_outcomes())
         node.children[action] = leaf
         self.maybe_add_regret_minimizer(state=state_prime)
-        self.top_down_order.append(leaf)
-
-        if not leaf.is_chance_node():
-            if leaf.player not in self.tfsdps:
-                self.tfsdps[leaf.player] = []
-            self.tfsdps[leaf.player].append((leaf, leaf.get_parent_sequence()))
+        self.maybe_add_to_tfsdp(leaf)
         return leaf
+
+    def maybe_add_to_tfsdp(self, node):
+        if not node.is_chance_node():
+            if node.player not in self.tfsdps:
+                self.tfsdps[node.player] = OrderedDict()
+            # reasigning a value does not change order, an infoset will be ordered based on the FIRST time it is seen
+            # though doing this just to be safe
+            if node.infoset_id not in self.tfsdps[node.player]:
+                self.tfsdps[node.player][node.infoset_id] = (node, node.get_parent_sequence())
 
     def state_of(self, node):
         state = self.root_state.clone()
@@ -401,21 +409,21 @@ class GTCFR:
             node = self.root
         return 1 + sum(self.count_nodes(c) for _, c in node.children.items())
 
-    def convert_to_sequence_form(self, player, behavioral_strat, inplace=False):
+    def convert_to_sequence_form(self, player, behavioral_strat):
         if player not in self.tfsdps:
             return behavioral_strat
 
         # TODO: dont want to accidently copy the the nodes with .copy(), so we place them in manually
-        sq_strat = behavioral_strat if inplace else {k: v for k, v in behavioral_strat.items()}
+        sq_strat = dict()
         # in topdown order, so sq_strat[parent_seq] is already updated, if not None
-        for (node, parent_seq) in self.tfsdps[player]:
+        for infoset_id, (node, parent_seq) in self.tfsdps[player].items():
             prob_flow = 1.
             if parent_seq is not None:
                 prob_flow = sq_strat[parent_seq]
             for action in node.legal_actions:
                 # each sequence is updated exactly once, since each infoset appears once in topdown ordering
-                seq = (node.infoset_id, action)
-                sq_strat[seq] = sq_strat[seq]*prob_flow
+                seq = (infoset_id, action)
+                sq_strat[seq] = behavioral_strat[infoset_id][action]*prob_flow
 
         return sq_strat
 
@@ -449,7 +457,7 @@ class GTCFR:
         behavioral = {infoset_id: {a: 1/len(regret_minimizer.action_set) for a in regret_minimizer.action_set}
                       for infoset_id, regret_minimizer in self.player_to_regret_minimizers[player].items()}
         if sequence_form:
-            return self._cvt_to_sequence_form(player=player, behavioral_strat=behavioral)
+            return self.convert_to_sequence_form(player=player, behavioral_strat=behavioral)
         else:
             return behavioral
 
@@ -479,7 +487,7 @@ class GTCFR:
 
 
 if __name__ == '__main__':
-    game = pyspiel.load_game('kuhn_poker')
+    game = pyspiel.load_game('leduc_poker')
 
     gtcfr = GTCFR(root_state=PyspielStateStructure(game.new_initial_state()))
     for _ in range(100):
@@ -492,11 +500,34 @@ if __name__ == '__main__':
 
     print('full tree size:', gtcfr.count_nodes())
     print('num infosets:', {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()})
-    for node in gtcfr.top_down_order:
-        print(node.infoset_id, node.get_history())
     gtcfr.create_full_tree()
     print('full tree size:', gtcfr.count_nodes())
     print('num infosets:', {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()})
+
+    sum_sq_0 = dict()
+    sum_sq_1 = dict()
+    accumulated_weight = 0.
+    for i in range(1000):
+        bhv_0 = gtcfr.obtain_strategy(player=0)
+        bhv_1 = gtcfr.obtain_strategy(player=1)
+        #bhv_1 = gtcfr.uniform_behavioral_strategy(player=1)
+        u0 = gtcfr.compute_utilities(player=0, other_player_strategies={1: bhv_1})
+
+        gtcfr.observe_utility(player=0, utility=u0)
+        u1 = gtcfr.compute_utilities(player=1, other_player_strategies={0: bhv_0})
+        gtcfr.observe_utility(player=1, utility=u1)
+        x0 = gtcfr.convert_to_sequence_form(player=0, behavioral_strat=bhv_0)
+        x1 = gtcfr.convert_to_sequence_form(player=1, behavioral_strat=bhv_1)
+        for seq in x0:
+            sum_sq_0[seq] = sum_sq_0.get(seq, 0.) + x0[seq]
+        for seq in x1:
+            sum_sq_1[seq] = sum_sq_1.get(seq, 0.) + x1[seq]
+        accumulated_weight += 1
+        avg_sq_0 = {k: v/accumulated_weight for (k, v) in sum_sq_0.items()}
+        avg_sq_1 = {k: v/accumulated_weight for (k, v) in sum_sq_1.items()}
+        value = gtcfr.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
+        print(value)
+    quit()
 
     node = gtcfr.root
     import numpy as np
@@ -523,11 +554,3 @@ if __name__ == '__main__':
         print(node.get_sequence(1))
         print(node.data.get('returns'))
         print()
-    for i in range(100):
-        x0 = gtcfr.obtain_strategy(player=0)
-        x1 = gtcfr.obtain_strategy(player=1)
-        u0 = gtcfr.compute_utilities(player=0, other_player_bhv_strategies={1: x1})
-        gtcfr.observe_utility(player=0, utility=u0)
-        u1 = gtcfr.compute_utilities(player=1, other_player_bhv_strategies={0: x0})
-        gtcfr.observe_utility(player=1, utility=u1)
-        print(x0)
