@@ -4,6 +4,8 @@ from collections import OrderedDict
 
 from regret_minimizer import *
 
+STORE_HISTORY = True
+
 
 class Node:
     def __init__(self,
@@ -65,14 +67,21 @@ class Node:
         else:
             return self.parent.get_history() + (self.last_action,)
 
-    def get_sequence(self, player):
+    def get_full_player_sequence(self, player):
+        """
+        get all (infoset id, action) along the path to this node for player
+        :param player: player to query
+        :return:
+        """
+        # if this key exists, we can just grab it from here
+        if 'player_sequences' in self.data and player in self.data['player_sequences']:
+            return self.data['player_sequences'][player]
         if self.parent is None:
             return ()
-
         if self.parent.player == player:
-            return self.parent.get_sequence(player) + (self.last_action,)
+            return self.parent.get_full_player_sequence(player) + ((self.parent.infoset_id, self.last_action),)
         else:
-            return self.parent.get_sequence(player)
+            return self.parent.get_full_player_sequence(player)
 
 
 class StateStructure():
@@ -152,8 +161,9 @@ class PyspielStateStructure(StateStructure):
 
 class GTCFR:
     def __init__(self, root_state: StateStructure,
-                 rm_class: RegretMinimizer = RegretMatchingPlus,
-                 rm_kwargs=None):
+                 rm_class: type(RegretMinimizer) = RegretMatchingPlus,
+                 rm_kwargs=None,
+                 ):
         self.root_state = root_state
         self.rm_class = rm_class
         self.rm_kwargs = rm_kwargs
@@ -168,16 +178,16 @@ class GTCFR:
                          legal_actions=root_state.legal_actions(),
 
                          returns=root_state.returns(),
+                         history=(),
                          )
         if self.root.is_chance_node():
             self.root.update_data(chance_outcomes=self.root_state.chance_outcomes())
 
         # dict of player -> tfsdp
-        # tfsdp is an ORDERED DICT (infoset id) -> (representative node, parent sequence)
+        # tfsdp is an ORDERED DICT (infoset id) -> (parent sequence, legal actions, all nodes in infoset)
         #  in topdown order
         self.tfsdps = dict()
-
-        self.maybe_add_to_tfsdp(self.root)
+        self.add_to_extra_structrues(self.root)
 
         # dict of player -> (infoset id -> regret minimizer)
         self.player_to_regret_minimizers = dict()
@@ -196,15 +206,21 @@ class GTCFR:
                 self.player_to_regret_minimizers[player][infoset_id] = rm
                 return rm
 
-    def sample_leaf_spot(self, player_bhv_strategies):
+    def sample_leaf_spot(self, expanding_players, player_bhv_strategies, p=0.5):
         """
         samples a node, action that is outside of the tree, using the strategies given
             ensures that either node is terminal (in which case action is None)
             or node,action leads outside the current tree
+        :param expanding_players: the players that are using an expanding policy (with probability p, take action at j with max Q(j,a))
+            Q(j,a)=mean_value(x,y|j,a)+C*var_value(x,y|j,a)*sqrt(N(j))/(1+N(j,a))
+            value is accumulated over all EXPANSION phases instead of during the CFR updates
+            value of action a from j is specifically mean of: (estimated CFR value of descendants of j)/(opponent reach probability summed over j)
         :param player_bhv_strategies: for each player i, other_player_strategies[i][infoset id of i] is a policy for this infoset
             IS BEHAVIORAL,
         :return: (node,action)
         """
+        if expanding_players is None:
+            expanding_players = set()
         node = self.root
         action = None
         while True:
@@ -216,7 +232,16 @@ class GTCFR:
                 dist = [node.data['chance_outcomes'][a] for a in actions]
             else:
                 strat = player_bhv_strategies[node.player][node.infoset_id]
-                dist = [strat[a] for a in actions]
+                dist = np.array([strat[a] for a in actions])
+                if node.player in expanding_players:
+                    # distribution should be (1-p)*{dist proportional to 1 for support of player strategy} + p*{1 for max of PUCT selection}
+
+                    action = self.PUCT_selection(node)
+                    action_idx = actions.index(action)
+
+                    support = (dist > 0)
+                    dist = (1 - p)*support/np.sum(support)  # distribution where the player strategy is positive, sums to (1-p)
+                    dist[action_idx] += p  # add p to the action selected by PUCT
             action = np.random.choice(actions, p=dist)
             if action not in node.children:
                 # this is outside the tree
@@ -225,6 +250,22 @@ class GTCFR:
                 # recurse on child
                 node = node.children[action]
         return (node, action)
+
+    def PUCT_selection(self, node):
+        """
+        select an action for a non-terminal infoset
+        :param node:
+        :return: action selected by PUCT
+        """
+
+    def external_sample_update(self, player, other_player_strategies, sequence_form):
+        """
+        conducts a more efficient external sample given the opponent strategies
+        :param player:
+        :param other_player_strategies:
+        :param sequence_form:
+        :return:
+        """
 
     def observe_utility(self, player, utility):
         """
@@ -250,11 +291,11 @@ class GTCFR:
         # equivalent to normal CFR, where V[j] = sum_a b_j[a]*Q[(j,a)] for decision nodes, and signal nodes are ignored
         # also this has nicely that Q[(j,a)] = u[(j,a)]+V[rho(j,a)]
         #  this is done to avoid the need for explicit signal nodes
-        for infoset_id, (node, parent_sequence) in reversed(tfsdp.items()):
+        for infoset_id, (parent_sequence, legal_actions, _) in reversed(tfsdp.items()):
             # adds u[(j,a)] to whatever is in Q[(j,a)]
-            for a in node.legal_actions:
-                seq = (node.infoset_id, a)
-                Q[seq] = Q.get(seq, 0.) + utility.get((node.infoset_id, a), 0.)
+            for a in legal_actions:
+                seq = (infoset_id, a)
+                Q[seq] = Q.get(seq, 0.) + utility.get((infoset_id, a), 0.)
 
             # let j',a' be the parent seq of j
             # let V_j = sum_a {b_j[a]Q[(j,a)]}
@@ -262,12 +303,12 @@ class GTCFR:
             #  since tfsdp is in topdown order, no children of j will be reached after this iteration
             #   thus, Q[(j,a)] is at its final value when it is added
             if parent_sequence is not None:
-                last_local_strategy = self.player_to_regret_minimizers[player][node.infoset_id].last_strat
-                V_infoset = sum(last_local_strategy[a]*Q[(node.infoset_id, a)] for a in node.legal_actions)
+                last_local_strategy = self.player_to_regret_minimizers[player][infoset_id].last_strat
+                V_infoset = sum(last_local_strategy[a]*Q[(infoset_id, a)] for a in legal_actions)
                 Q[parent_sequence] = Q.get(parent_sequence, 0.) + V_infoset
 
-        for infoset_id, (node, _) in tfsdp.items():
-            ute = {a: Q[(infoset_id, a)] for a in node.legal_actions}
+        for infoset_id, (_, legal_actions, _) in tfsdp.items():
+            ute = {a: Q[(infoset_id, a)] for a in legal_actions}
             self.player_to_regret_minimizers[player][infoset_id].observe_utility(utility=ute)
 
     def compute_player_value(self, player, player_sequential_strategies):
@@ -375,24 +416,35 @@ class GTCFR:
 
             returns=state_prime.returns(),
         )
-        if not leaf.terminal:
-            # add legal actions if not terminal
-            leaf.update_data(legal_actions=state_prime.legal_actions())
+        child_player_sequences = node.data.get('player_sequences', dict())
+        if not node.is_chance_node():
+            child_player_sequences = child_player_sequences.copy() # can just send the same object to chance nodes
+            child_player_sequences[node.player] = child_player_sequences.get(node.player, ()) + ((node.infoset_id, action),)
+        leaf.update_data(player_sequences=child_player_sequences)
+
         if leaf.is_chance_node():
             leaf.update_data(chance_outcomes=state_prime.chance_outcomes())
         node.children[action] = leaf
         self.maybe_add_regret_minimizer(state=state_prime)
-        self.maybe_add_to_tfsdp(leaf)
+        self.add_to_extra_structrues(leaf)
         return leaf
 
-    def maybe_add_to_tfsdp(self, node):
-        if not node.is_chance_node():
+    def add_to_extra_structrues(self, node):
+        """
+        adds to extra structures, including tfsdp for player (if applicable)
+        :param node:
+        :return:
+        """
+        if not node.is_chance_node() and not node.terminal:
+            # add to tfsdp structure
             if node.player not in self.tfsdps:
                 self.tfsdps[node.player] = OrderedDict()
             # reasigning a value does not change order, an infoset will be ordered based on the FIRST time it is seen
             # though doing this just to be safe
             if node.infoset_id not in self.tfsdps[node.player]:
-                self.tfsdps[node.player][node.infoset_id] = (node, node.get_parent_sequence())
+                self.tfsdps[node.player][node.infoset_id] = (node.get_parent_sequence(), node.legal_actions, set())
+            _, _, infoset = self.tfsdps[node.player][node.infoset_id]
+            infoset.add(node)
 
     def state_of(self, node):
         state = self.root_state.clone()
@@ -416,11 +468,11 @@ class GTCFR:
         # TODO: dont want to accidently copy the the nodes with .copy(), so we place them in manually
         sq_strat = dict()
         # in topdown order, so sq_strat[parent_seq] is already updated, if not None
-        for infoset_id, (node, parent_seq) in self.tfsdps[player].items():
+        for infoset_id, (parent_seq, legal_actions, _) in self.tfsdps[player].items():
             prob_flow = 1.
             if parent_seq is not None:
                 prob_flow = sq_strat[parent_seq]
-            for action in node.legal_actions:
+            for action in legal_actions:
                 # each sequence is updated exactly once, since each infoset appears once in topdown ordering
                 seq = (infoset_id, action)
                 sq_strat[seq] = behavioral_strat[infoset_id][action]*prob_flow
@@ -453,8 +505,8 @@ class GTCFR:
 
     def best_response_value(self, player, other_player_strategies, sequential_form=False):
         utilities = self.compute_utilities(player=player, other_player_strategies=other_player_strategies, sequential_form=sequential_form)
-        for infoset_id, (node, parent_sequence) in reversed(self.tfsdps[player].items()):
-            max_ev = max(utilities[(infoset_id, a)] for a in node.legal_actions)
+        for infoset_id, (parent_sequence, legal_actions, _) in reversed(self.tfsdps[player].items()):
+            max_ev = max(utilities[(infoset_id, a)] for a in legal_actions)
             utilities[parent_sequence] = utilities.get(parent_sequence, 0.) + max_ev
         # None is the root node, which will collect the overall best response value
         return utilities[None]
@@ -462,9 +514,9 @@ class GTCFR:
     def best_response_strategy(self, player, other_player_strategies, sequential_form=False, return_sequential_form=False):
         utilities = self.compute_utilities(player=player, other_player_strategies=other_player_strategies, sequential_form=sequential_form)
         strategy = dict()
-        for infoset_id, (node, parent_sequence) in reversed(self.tfsdps[player].items()):
-            strategy[infoset_id] = {a: 0. for a in node.legal_actions}
-            best_action = max(node.legal_actions, key=lambda a: utilities[(infoset_id, a)])
+        for infoset_id, (parent_sequence, legal_actions, _) in reversed(self.tfsdps[player].items()):
+            strategy[infoset_id] = {a: 0. for a in legal_actions}
+            best_action = max(legal_actions, key=lambda a: utilities[(infoset_id, a)])
             strategy[infoset_id][best_action] = 1.
 
             max_ev = utilities[(infoset_id, best_action)]
@@ -500,13 +552,14 @@ class GTCFR:
             node: Node = unexpanded.pop()
             if node.terminal:
                 continue
+
+            state = self.root_state.clone()
+            for a in node.get_history():
+                state.apply_action(a)
             # legal actions always exist for non-terminal nodes
             legal_actions = node.legal_actions
             for action in legal_actions:
                 if action not in node.children:
-                    state = self.root_state.clone()
-                    for a in node.get_history():
-                        state.apply_action(a)
                     leaf = self.make_leaf(node=node,
                                           state=state.clone(),
                                           action=action,
@@ -517,11 +570,16 @@ class GTCFR:
 
 
 if __name__ == '__main__':
-    game = pyspiel.load_game('kuhn_poker')
+    game = pyspiel.load_game('tic_tac_toe')
 
-    gtcfr = GTCFR(root_state=PyspielStateStructure(game.new_initial_state()))
-    for _ in range(500):
-        node, action = gtcfr.sample_leaf_spot(player_bhv_strategies={i: gtcfr.obtain_strategy(player=i) for i in [0, 1]})
+    gtcfr = GTCFR(
+        root_state=PyspielStateStructure(game.new_initial_state()),
+        rm_class=PredictiveRegretMatchingPlus,
+    )
+    for _ in range(69):
+        node, action = gtcfr.sample_leaf_spot(player_bhv_strategies={i: gtcfr.obtain_strategy(player=i) for i in [0, 1]},
+                                              expanding_players=None,
+                                              )
         state = gtcfr.state_of(node)
         if not node.terminal:
             gtcfr.make_leaf(node=node,
@@ -531,6 +589,12 @@ if __name__ == '__main__':
     print('full tree size:', gtcfr.count_nodes())
     print('num infosets:', {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()})
     gtcfr.create_full_tree()
+    if False:
+        for player,tfsdp in gtcfr.tfsdps.items():
+            print()
+            print(player)
+            for infoset_id,(parent_seq,legal_actions,infoset) in tfsdp.items():
+                print('infoset:',infoset_id,'; actions:',legal_actions,'; size:',len(infoset))
     print('full tree size:', gtcfr.count_nodes())
     print('num infosets:', {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()})
     br_value = gtcfr.best_response_value(player=0, other_player_strategies={1: gtcfr.uniform_behavioral_strategy(player=1)})
@@ -598,7 +662,6 @@ if __name__ == '__main__':
         print('your result:', s.returns()[player])
         if input('quit [y/n]: ').lower() == 'y':
             break
-    quit()
 
     node = gtcfr.root
     import numpy as np
@@ -609,8 +672,8 @@ if __name__ == '__main__':
     print(node.player)
     print('chance reach prob:', node.reach_prob_chance)
     print(node.get_history())
-    print(node.get_sequence(0))
-    print(node.get_sequence(1))
+    print(node.get_full_player_sequence(0))
+    print(node.get_full_player_sequence(1))
     print()
     while not node.terminal:
         a = np.random.choice(list(node.children.keys()))
@@ -621,7 +684,7 @@ if __name__ == '__main__':
         print(node.player)
         print('chance reach prob:', node.reach_prob_chance)
         print(node.get_history())
-        print(node.get_sequence(0))
-        print(node.get_sequence(1))
+        print(node.get_full_player_sequence(0))
+        print(node.get_full_player_sequence(1))
         print(node.data.get('returns'))
         print()
