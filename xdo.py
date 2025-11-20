@@ -87,15 +87,17 @@ if __name__ == '__main__':
     if os.path.exists(save_file):
         gap_over_time = np.load(save_file)
         plt.plot(gap_over_time[0], gap_over_time[1], label='xdo')
-    save_file = os.path.join(save_path, 'gtcfr_' + game_name + '_conv_by_time.npy')
-    if os.path.exists(save_file):
-        gap_over_time = np.load(save_file)
-        plt.plot(gap_over_time[0], gap_over_time[1], label='gtcfr')
-    plt.ylabel('nash conv')
-    plt.title(game_name)
-    plt.xlabel('clock time')
-    plt.legend()
-    plt.show()
+
+        save_file = os.path.join(save_path, 'gtcfr_' + game_name + '_conv_by_time.npy')
+        if os.path.exists(save_file):
+            gap_over_time = np.load(save_file)
+            plt.plot(gap_over_time[0], gap_over_time[1], label='gtcfr')
+        plt.ylabel('nash conv')
+        plt.title(game_name)
+        plt.xlabel('clock time')
+        plt.legend()
+        plt.savefig(os.path.join(save_path,'xdo_gtcfr_cmp_plt.png'))
+        plt.show()
 
     np.random.seed(21)
     game = pyspiel.load_game(game_name)
@@ -110,7 +112,7 @@ if __name__ == '__main__':
     print(xdo.constant_sum_nash_gap(player_strategies={0: xdo.obtain_strategy(0), 1: xdo.obtain_strategy(1)}, sequential_form=False))
     update_times = []
     nash_gaps = []
-    for _ in range(100):
+    for ii in range(100):
 
         sum_sq_0 = dict()
         sum_sq_1 = dict()
@@ -120,7 +122,7 @@ if __name__ == '__main__':
         avg_sq_0 = None
         avg_sq_1 = None
         start = time.time()
-        for i in range(100):
+        for i in range(1,101):
             bhv_0 = xdo.obtain_strategy(player=0)
             bhv_1 = xdo.obtain_strategy(player=1)
             x0 = xdo.convert_to_sequence_form(player=0, behavioral_strat=bhv_0)
@@ -151,7 +153,7 @@ if __name__ == '__main__':
             # restart regret calculation from scratch, as there is a new restricted game
         gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
         nash_gaps.append(gap)
-        print(gap)
+        print(ii,gap)
         print('updates', any_updates)
         print('p0 val and br val', value0, bru_0)
         print('p1 val and br val', value1, bru_1)
