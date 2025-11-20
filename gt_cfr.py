@@ -838,12 +838,13 @@ if __name__ == '__main__':
     gtcfr = GTCFR(
         root_state=PyspielStateStructure(game.new_initial_state()),
         rm_class=DCFRRegretMatching,
-        rm_kwargs={'alpha': .5}
+        rm_kwargs={'alpha': 1.5}
     )
+    do_full=False
     full_gtcfr = GTCFR(
         root_state=PyspielStateStructure(game.new_initial_state()),
         rm_class=DCFRRegretMatching,
-        rm_kwargs={'alpha':.5}
+        rm_kwargs={'alpha': 1.5}
     )
     full_gtcfr.create_full_tree()
     print('full tree size:', full_gtcfr.count_nodes())
@@ -858,7 +859,7 @@ if __name__ == '__main__':
     extended_nash_gaps = []
 
     extended_sf_0, extended_sf_1 = dict(), dict()
-    for i in range(1, 2000):
+    for i in range(1, 10000):
         start = time.time()
         # GTCFR update, select and expand a leaf
         expanding_player = i%2
@@ -888,6 +889,8 @@ if __name__ == '__main__':
 
         w = 0
         for full in [True, False]:
+            if not do_full and full:
+                continue
             start = time.time()
             tree = full_gtcfr if full else gtcfr
 
@@ -948,8 +951,11 @@ if __name__ == '__main__':
         extended_gap = full_gtcfr.constant_sum_nash_gap(player_strategies={0: extended_sf_0, 1: extended_sf_1},
                                                         sequential_form=True)
         extended_nash_gaps.append(extended_gap)
-        full_gap = full_gtcfr.constant_sum_nash_gap(player_strategies={0: full_avg_sq_0, 1: full_avg_sq_1},
+        if do_full:
+            full_gap = full_gtcfr.constant_sum_nash_gap(player_strategies={0: full_avg_sq_0, 1: full_avg_sq_1},
                                                     sequential_form=True)
+        else:
+            full_gap=None
         print(i, '(full,gt) nash gaps:', (full_gap, extended_gap),
               '; p0 tree val:', value0,
               '; ext. p0 vs. uniform:', extended_value0_agnt_uniform)

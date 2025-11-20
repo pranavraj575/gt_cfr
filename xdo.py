@@ -78,8 +78,26 @@ if __name__ == '__main__':
     import time, os
     import matplotlib.pyplot as plt
 
-    np.random.seed(21)
     game_name = 'leduc_poker'
+    DIR = os.path.dirname(__file__)
+    save_path = os.path.join(DIR, 'output', )
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    save_file = os.path.join(save_path, 'nxdo_' + game_name + '_conv_by_time.npy')
+    if os.path.exists(save_file):
+        gap_over_time = np.load(save_file)
+        plt.plot(gap_over_time[0], gap_over_time[1], label='xdo')
+    save_file = os.path.join(save_path, 'gtcfr_' + game_name + '_conv_by_time.npy')
+    if os.path.exists(save_file):
+        gap_over_time = np.load(save_file)
+        plt.plot(gap_over_time[0], gap_over_time[1], label='gtcfr')
+    plt.ylabel('nash conv')
+    plt.title(game_name)
+    plt.xlabel('clock time')
+    plt.legend()
+    plt.show()
+
+    np.random.seed(21)
     game = pyspiel.load_game(game_name)
 
     xdo = XDO(
