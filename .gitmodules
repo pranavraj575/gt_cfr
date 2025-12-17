@@ -1,0 +1,3 @@
+[submodule "config_networks"]
+	path = config_networks
+	url = https://github.com/pranavraj575/config_networks

@@ -26,7 +26,8 @@ class XDO(GTCFR):
                                                 force_reset=True,
                                                 )
 
-    def assert_regret_minimizers_have_correct_support(self, min_restricted_actions=1, max_restricted_actions=float('inf')):
+    def assert_regret_minimizers_have_correct_support(self, min_restricted_actions=1,
+                                                      max_restricted_actions=float('inf')):
         for player, single_player_tree in self.single_player_trees.items():
             for infoset_id, dic in single_player_tree.items():
                 restricted = self.player_to_regret_minimizers[player][infoset_id].action_set
@@ -51,7 +52,7 @@ class XDO(GTCFR):
                 prob_flow = 1.
                 if parent_seq is not None:
                     prob_flow = strategy[parent_seq]
-                if strategy[seq] > epsilon*prob_flow:
+                if strategy[seq] > epsilon * prob_flow:
                     # strategy(seq)/prob_flow > epsilon, but dodge the /0 error
                     if infoset_id not in support:
                         support[infoset_id] = set()
@@ -78,7 +79,7 @@ if __name__ == '__main__':
     import time, os
     import matplotlib.pyplot as plt
 
-    game_name = 'leduc_poker'
+    game_name = 'kuhn_poker'
     DIR = os.path.dirname(__file__)
     save_path = os.path.join(DIR, 'output', )
     if not os.path.exists(save_path):
@@ -96,7 +97,7 @@ if __name__ == '__main__':
         plt.title(game_name)
         plt.xlabel('clock time')
         plt.legend()
-        plt.savefig(os.path.join(save_path,'xdo_gtcfr_cmp_plt.png'))
+        plt.savefig(os.path.join(save_path, game_name + '_xdo_gtcfr_cmp_plt.png'))
         plt.show()
 
     np.random.seed(21)
@@ -109,11 +110,12 @@ if __name__ == '__main__':
     print('expanded nodes', xdo.count_nodes())
     # should only be one available action per infoset
     xdo.assert_regret_minimizers_have_correct_support(max_restricted_actions=1)
-    print(xdo.constant_sum_nash_gap(player_strategies={0: xdo.obtain_strategy(0), 1: xdo.obtain_strategy(1)}, sequential_form=False))
+    print(xdo.constant_sum_nash_gap(player_strategies={0: xdo.obtain_strategy(0), 1: xdo.obtain_strategy(1)},
+                                    sequential_form=False))
     update_times = []
     nash_gaps = []
+    i = 0
     for ii in range(100):
-
         sum_sq_0 = dict()
         sum_sq_1 = dict()
         accumulated_weight = 0.
@@ -122,7 +124,9 @@ if __name__ == '__main__':
         avg_sq_0 = None
         avg_sq_1 = None
         start = time.time()
-        for i in range(1,101):
+
+        for _ in range(1, 101):
+            i += 1
             bhv_0 = xdo.obtain_strategy(player=0)
             bhv_1 = xdo.obtain_strategy(player=1)
             x0 = xdo.convert_to_sequence_form(player=0, behavioral_strat=bhv_0)
@@ -143,20 +147,23 @@ if __name__ == '__main__':
         update_times.append(time.time() - start)
         value0 = xdo.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
         value1 = xdo.compute_player_value(player=1, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
-        br0, bru_0 = xdo.best_response_strategy(player=0, other_player_strategies={1: xdo.obtain_strategy(1)}, sequential_form=False)
+        br0, bru_0 = xdo.best_response_strategy(player=0, other_player_strategies={1: xdo.obtain_strategy(1)},
+                                                sequential_form=False)
         p0_updated = xdo.add_support_of_strategy(player=0, strategy=br0)
-        br1, bru_1 = xdo.best_response_strategy(player=1, other_player_strategies={0: xdo.obtain_strategy(0)}, sequential_form=False)
+        br1, bru_1 = xdo.best_response_strategy(player=1, other_player_strategies={0: xdo.obtain_strategy(0)},
+                                                sequential_form=False)
         p1_updated = xdo.add_support_of_strategy(player=1, strategy=br1)
         any_updates = p0_updated or p1_updated
         if any_updates:
             xdo.reset_regret_minimizers()
+            i = 0
             # restart regret calculation from scratch, as there is a new restricted game
         gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
         nash_gaps.append(gap)
-        print(ii,gap)
+        print(ii, gap)
         print('updates', any_updates)
-        print('p0 val and br val', value0, bru_0)
-        print('p1 val and br val', value1, bru_1)
+        print('p0 val, br val, improvement', value0, bru_0, bru_0 - value0)
+        print('p1 val, br val, improvement', value1, bru_1, bru_1 - value1)
         print()
 
     DIR = os.path.dirname(__file__)

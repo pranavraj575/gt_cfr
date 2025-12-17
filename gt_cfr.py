@@ -840,7 +840,7 @@ if __name__ == '__main__':
         rm_class=DCFRRegretMatching,
         rm_kwargs={'alpha': 1.5}
     )
-    do_full=False
+    do_full=True
     full_gtcfr = GTCFR(
         root_state=PyspielStateStructure(game.new_initial_state()),
         rm_class=DCFRRegretMatching,
@@ -968,6 +968,7 @@ if __name__ == '__main__':
                               extended_nash_gaps])
     np.save(save_file, gap_over_time)
     plt.plot(gap_over_time[0], gap_over_time[1])
+    plt.savefig(os.path.join(save_path, 'gtcfr_' + game_name + '_conv_by_time.png'))
     plt.show()
     print('expanded tree size:', gtcfr.count_nodes())
     print('num infosets:', {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()})
