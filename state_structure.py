@@ -1,10 +1,14 @@
 import numpy as np
 import pyspiel
+import torch
 
 
 class StateStructure():
 
     def get_infoset_id(self):
+        raise NotImplementedError
+
+    def get_infoset_tensor(self):
         raise NotImplementedError
 
     def clone(self):
@@ -21,6 +25,10 @@ class StateStructure():
 
     def chance_outcomes(self):
         raise NotImplementedError
+
+    def sample_chance_outcomes(self):
+        o = self.chance_outcomes()
+        return np.random.choice([a for a, _ in o.items()], p=[prob for _, prob in o.items()])
 
     def returns(self):
         raise NotImplementedError
@@ -44,13 +52,30 @@ class StateStructure():
 
 
 class PyspielStateStructure(StateStructure):
-    def __init__(self, state: pyspiel.State):
+    def __init__(self, state: pyspiel.State, use_observation_as_infostate=False):
         self.state = state
+        game: pyspiel.Game = self.state.get_game()
+        self.use_obs = use_observation_as_infostate
+        if self.use_obs:
+            self.tensor_shape = game.observation_tensor_shape()
+        else:
+            self.tensor_shape = game.information_state_tensor_shape()
 
     def get_infoset_id(self):
         player = self.state.current_player()
         if player >= 0:
             return self.state.information_state_string()
+        else:
+            return None
+
+    def get_infoset_tensor(self):
+        player = self.state.current_player()
+
+        if player >= 0:
+            if self.use_obs:
+                return torch.tensor(self.state.observation_tensor()).reshape(self.tensor_shape).unsqueeze(0)
+            else:
+                return torch.tensor(self.state.information_state_tensor()).reshape(self.tensor_shape).unsqueeze(0)
         else:
             return None
 
@@ -91,12 +116,38 @@ class PyspielStateStructure(StateStructure):
         for _ in range(n):
             state = self.clone()
             while not state.is_terminal():
-                actions = list(state.legal_actions())
                 if state.is_chance_node():
-                    o = state.chance_outcomes()
-                    action = np.random.choice(actions, p=[o[a] for a in actions])
+                    action = state.sample_chance_outcomes()
                 else:
+                    actions = list(state.legal_actions())
                     action = np.random.choice(actions)
                 state.apply_action(action)
             returns += np.array(state.returns())
         return returns/n
+
+
+if __name__ == '__main__':
+    import os, ast
+    from config_networks import CustomNN
+
+    g: pyspiel.Game = pyspiel.load_game('tic_tac_toe')
+    s = PyspielStateStructure(state=g.new_initial_state(), use_observation_as_infostate=True)
+    s.apply_action(2)
+    s.apply_action(3)
+
+    print(s.get_infoset_tensor().shape)
+    config_dir = os.path.join(os.path.dirname(os.path.basename(__file__)),
+                              'config_files'
+                              )
+    f = open(os.path.join(config_dir, 'ttt_net.txt'), 'r')
+    ttt_net = CustomNN(structure=ast.literal_eval(f.read()))
+    f.close()
+    print(ttt_net)
+    print(ttt_net(s.get_infoset_tensor()))
+    optim = torch.optim.Adam(ttt_net.parameters())
+    for _ in range(100):
+        optim.zero_grad()
+        l = torch.mean(torch.square(ttt_net(s.get_infoset_tensor())))
+        l.backward()
+        optim.step()
+        print(l.item())

@@ -26,6 +26,15 @@ class XDO(GTCFR):
                                                 force_reset=True,
                                                 )
 
+    def final_expansion(self):
+        for player, single_player_tree in self.single_player_trees.items():
+            for infoset_id, dic in single_player_tree.items():
+                self.maybe_add_regret_minimizer(player=player,
+                                                infoset_id=infoset_id,
+                                                actions=dic[LEGAL_ACTIONS],
+                                                force_reset=True,
+                                                )
+
     def assert_regret_minimizers_have_correct_support(self, min_restricted_actions=1,
                                                       max_restricted_actions=float('inf')):
         for player, single_player_tree in self.single_player_trees.items():
@@ -52,7 +61,7 @@ class XDO(GTCFR):
                 prob_flow = 1.
                 if parent_seq is not None:
                     prob_flow = strategy[parent_seq]
-                if strategy[seq] > epsilon * prob_flow:
+                if strategy[seq] > epsilon*prob_flow:
                     # strategy(seq)/prob_flow > epsilon, but dodge the /0 error
                     if infoset_id not in support:
                         support[infoset_id] = set()
@@ -73,39 +82,154 @@ class XDO(GTCFR):
                 any_updates = True
         return any_updates
 
+    def iterate_nodes(self, node=None):
+        """
+        debug method, iterate over nodes
+        """
+        if node is None:
+            node = self.root
+        yield node
+        actions = []
+        if (not node.terminal) and (not node.is_chance_node()):
+            rm = self.player_to_regret_minimizers[node.player][node.infoset_id]
+            for a in rm.action_set:
+                if a in node.children:
+                    actions.append(a)
+        elif node.is_chance_node():
+            actions = list(node.children.keys())
 
-if __name__ == '__main__':
-    from gt_cfr import PyspielStateStructure
-    import time, os
-    import matplotlib.pyplot as plt
+        for a in actions:
+            for n in self.iterate_nodes(node.children[a]):
+                yield n
 
-    game_name = 'kuhn_poker'
+
+def plt_all(game_name, game_tag=''):
+    for log_scale in False, True:
+        for clock_time in True, False:
+            plt_one(game_name, game_tag=game_tag, log_scale=log_scale, clock_time=clock_time)
+
+
+def plt_one(game_name, game_tag='', log_scale=False, clock_time=False):
+    key = game_name + game_tag
     DIR = os.path.dirname(__file__)
     save_path = os.path.join(DIR, 'output', )
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-    save_file = os.path.join(save_path, 'nxdo_' + game_name + '_conv_by_time.npy')
+    save_file = os.path.join(save_path, key, 'xdo_metrics.pkl')
     if os.path.exists(save_file):
-        gap_over_time = np.load(save_file)
-        plt.plot(gap_over_time[0], gap_over_time[1], label='xdo')
+        f = open(save_file, 'rb')
+        gap_over_time = pickle.load(f)
+        f.close()
+        if log_scale:
+            fig, ax = plt.subplots()
+            ax.set_yscale("log", nonpositive='mask')
 
-        save_file = os.path.join(save_path, 'gtcfr_' + game_name + '_conv_by_time.npy')
+        for t in gap_over_time:
+            if clock_time:
+                plt.plot(gap_over_time[t]['times'], gap_over_time[t]['conv'], label='xdo with ' + t)
+            else:
+                plt.plot(gap_over_time[t]['conv'], label='xdo with ' + t)
+
+        save_file = os.path.join(save_path, key, 'gtcfr_conv_by_time.npy')
         if os.path.exists(save_file):
             gap_over_time = np.load(save_file)
-            plt.plot(gap_over_time[0], gap_over_time[1], label='gtcfr')
+            if clock_time:
+                plt.plot(gap_over_time['times'], gap_over_time['conv'], label='gtcfr')
+            else:
+                plt.plot(gap_over_time['conv'], label='gtcfr')
         plt.ylabel('nash conv')
-        plt.title(game_name)
-        plt.xlabel('clock time')
+        plt.title(key)
+        if clock_time:
+            plt.xlabel('clock time')
+        else:
+            plt.xlabel('epochs')
         plt.legend()
-        plt.savefig(os.path.join(save_path, game_name + '_xdo_gtcfr_cmp_plt.png'))
-        plt.show()
+        fn = os.path.join(save_path, key, 'xdo_gtcfr_cmp_plt' + ('_log' if log_scale else '') + (
+            '_clock' if clock_time else '') + '.png')
+        plt.savefig(fn)
+        print('saving to', fn)
+        # plt.show()
+        plt.close()
 
-    np.random.seed(21)
-    game = pyspiel.load_game(game_name)
+        max_epoch = -float('inf')
+        for t in gap_over_time:
+            iss = gap_over_time[t]['expanded_infosets']
+            ass = gap_over_time[t]['all_infosets']
+            max_epoch = max(max_epoch, len(iss) - 1)
+            plt.plot(np.sum(iss, axis=1)/np.sum(ass), label='xdo with ' + t)
+        plt.legend()
+        plt.plot([0, max_epoch], [1, 1], linestyle='--', alpha=.5)
+        plt.ylabel('proportion of infosets expanded')
+        plt.xlabel('epochs')
+        plt.title(key)
+        fn = os.path.join(save_path, key, 'xdo_expansion_plt.png')
+        plt.savefig(fn)
+        print('saving to', fn)
+        # plt.show()
+        plt.close()
+
+
+def universal_poker_tag_to_args(tag):
+    dic = {'numRanks': 6, 'numSuits': 4, 'bettingAbstraction': 'fcpa', "stack": '1200 1200', 'blind': '100 100'}
+    if '-small_deck' in tag:
+        dic['numRanks'] = 3
+        dic['numSuits'] = 2
+
+    if '-large_deck' in tag:
+        dic['numRanks'] = 13
+
+    if '-include_half' in tag:
+        dic['bettingAbstraction'] = 'fchpa'
+
+    if '-2_hole' in tag:
+        dic['numHoleCards'] = 2
+
+    if '-3_rounds' in tag:
+        dic['numBoardCards'] = '1 1'
+
+    if '-4_rounds' in tag:
+        dic['numBoardCards'] = '1 1 1'
+    return dic
+
+
+def main(game_name, tag, game_tag='', overwrite=False):
+    key = game_name + game_tag
+    DIR = os.path.dirname(__file__)
+    save_path = os.path.join(DIR, 'output', key, )
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    save_file = os.path.join(save_path, 'xdo_metrics.pkl')
+
+    if os.path.exists(save_file):
+        f = open(save_file, 'rb')
+        gap_over_time = pickle.load(f)
+        f.close()
+    else:
+        gap_over_time = dict()
+
+    if (not overwrite) and tag in gap_over_time:
+        return
+
+    if tag == 'CFR':
+        RM = RegretMatching
+    elif tag == 'CFR+':
+        RM = RegretMatchingPlus
+    elif tag == 'DCFR':
+        RM = DCFRRegretMatching
+    elif tag == 'PCFR':
+        RM = PredictiveRegretMatchingPlus
+    else:
+        raise Exception(tag)
+    args = dict()
+    if game_name == 'universal_poker':
+        args = universal_poker_tag_to_args(game_tag)
+    game = pyspiel.load_game(game_name,
+                             args
+                             )
 
     xdo = XDO(
         root_state=PyspielStateStructure(game.new_initial_state()),
-        rm_class=RegretMatchingPlus,
+        rm_class=RM,
     )
     print('expanded nodes', xdo.count_nodes())
     # should only be one available action per infoset
@@ -114,8 +238,9 @@ if __name__ == '__main__':
                                     sequential_form=False))
     update_times = []
     nash_gaps = []
+    expanded_infosets = []
     i = 0
-    for ii in range(100):
+    for ii in range(20):
         sum_sq_0 = dict()
         sum_sq_1 = dict()
         accumulated_weight = 0.
@@ -125,7 +250,7 @@ if __name__ == '__main__':
         avg_sq_1 = None
         start = time.time()
 
-        for _ in range(1, 101):
+        for _ in range(1, 401):
             i += 1
             bhv_0 = xdo.obtain_strategy(player=0)
             bhv_1 = xdo.obtain_strategy(player=1)
@@ -155,24 +280,54 @@ if __name__ == '__main__':
         p1_updated = xdo.add_support_of_strategy(player=1, strategy=br1)
         any_updates = p0_updated or p1_updated
         if any_updates:
-            xdo.reset_regret_minimizers()
+            xdo.reset_regret_minimizers(warm_start=1.)
             i = 0
             # restart regret calculation from scratch, as there is a new restricted game
         gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
         nash_gaps.append(gap)
+
+        expanded_infos = xdo.count_infosets()
+        expanded_infosets.append(expanded_infos)
+        print('expanded infosets', expanded_infos)
         print(ii, gap)
         print('updates', any_updates)
         print('p0 val, br val, improvement', value0, bru_0, bru_0 - value0)
         print('p1 val, br val, improvement', value1, bru_1, bru_1 - value1)
         print()
+    xdo.final_expansion()
+    all_infosets = xdo.count_infosets()
 
-    DIR = os.path.dirname(__file__)
-    save_path = os.path.join(DIR, 'output', )
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    save_file = os.path.join(save_path, 'nxdo_' + game_name + '_conv_by_time')
-    gap_over_time = np.array([np.cumsum(update_times),
-                              nash_gaps])
-    np.save(save_file, gap_over_time)
-    plt.plot(gap_over_time[0], gap_over_time[1])
-    plt.show()
+    gap_over_time[tag] = {'times': np.cumsum(update_times),
+                          'conv': nash_gaps,
+                          'expanded_infosets': np.array(expanded_infosets),
+                          'all_infosets': np.array(all_infosets)
+                          }
+    f = open(save_file, 'wb')
+    pickle.dump(gap_over_time, f)
+    f.close()
+
+
+if __name__ == '__main__':
+    from gt_cfr import PyspielStateStructure
+    import time, os, pickle
+    import matplotlib.pyplot as plt
+
+    overwrite = False
+    game_name = 'universal_poker'
+    game_tag = '-small_deck-2_hole'
+
+    if game_name != 'universal_poker':
+        game_tag = ''
+    from regret_minimizer import RegretMatching, RegretMatchingPlus, DCFRRegretMatching, PredictiveRegretMatchingPlus
+
+    tags = ['CFR', 'CFR+', 'DCFR', 'PCFR']
+
+    for tag in tags:
+        plt_all(game_name=game_name, game_tag=game_tag, )
+        np.random.seed(21)
+        main(game_name, tag=tag, game_tag=game_tag, overwrite=overwrite)
+
+    plt_all(game_name=game_name, game_tag=game_tag, )
+
+    # plt.plot(gap_over_time[tag][0], gap_over_time[tag][1])
+    # plt.show()

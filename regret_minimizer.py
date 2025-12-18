@@ -7,13 +7,14 @@ class RegretMinimizer(object):
     def observe_utility(self, utility):
         raise NotImplementedError
 
-    def reset(self):
+    def reset(self, warm_start=None):
         raise NotImplementedError
 
 
 class RegretMatching(RegretMinimizer):
     def __init__(self, action_set, **kwargs):
         self.action_set = set(action_set)
+        self.cum_regrets = None
         self.reset()
 
     def next_strategy(self):
@@ -46,33 +47,23 @@ class RegretMatching(RegretMinimizer):
             for a in self.action_set
         }
 
-    def reset(self):
-        self.cum_regrets = {a: 0. for a in self.action_set}
+    def reset(self, warm_start=None):
+        if warm_start is not None and self.cum_regrets is not None:
+            sum_regrets = sum(max(r, 0.) for _, r in self.cum_regrets.items())
+            sum_regrets = max(sum_regrets, 1E-3)
+            self.cum_regrets = {a: warm_start*self.cum_regrets.get(a, 0)/sum_regrets for a in self.action_set}
+        else:
+            self.cum_regrets = {a: 0. for a in self.action_set}
+
         self.last_strat = {
             a: 1/len(self.action_set)
             for a in self.action_set
         }
 
 
-class RegretMatchingPlus(RegretMinimizer):
+class RegretMatchingPlus(RegretMatching):
     def __init__(self, action_set):
-        self.action_set = set(action_set)
-        self.reset()
-
-    def next_strategy(self):
-        sum_regrets = sum(
-            self.cum_regrets[a] for a in self.action_set)  # cumulative regrets will be nonnegative since this is RM+
-        if sum_regrets == 0:
-            self.last_strat = {
-                a: 1/len(self.action_set)
-                for a in self.action_set
-            }
-        else:
-            self.last_strat = {
-                a: self.cum_regrets[a]/sum_regrets  # cumulative regrets will be nonnegative since this is RM+
-                for a in self.action_set
-            }
-        return self.last_strat.copy()
+        super().__init__(action_set)
 
     def observe_utility(self, utility):
         assert isinstance(utility, dict) and utility.keys() == self.action_set
@@ -84,13 +75,6 @@ class RegretMatchingPlus(RegretMinimizer):
         self.cum_regrets = {
             # instant regret is u-<x,u>1, at dimension a this is u[a]-<x,u>
             a: max(self.cum_regrets[a] + (utility[a] - ute), 0)
-            for a in self.action_set
-        }
-
-    def reset(self):
-        self.cum_regrets = {a: 0. for a in self.action_set}
-        self.last_strat = {
-            a: 1/len(self.action_set)
             for a in self.action_set
         }
 
@@ -117,13 +101,13 @@ class DCFRRegretMatching(RegretMatching):
         # now multiply accumulated positive regrets by t^alpha/(t^alpha + 1)
         # and negative regrets by t^beta/(t^beta + 1)
         self.cum_regrets = {
-            a: (r*self.t ** self.alpha/(self.t ** self.alpha + 1) if r >= 0 else
-                r*self.t ** self.beta/(self.t ** self.beta + 1))
+            a: (r*self.t**self.alpha/(self.t**self.alpha + 1) if r >= 0 else
+                r*self.t**self.beta/(self.t**self.beta + 1))
             for a, r in self.cum_regrets.items()
         }
 
-    def reset(self):
-        super().reset()
+    def reset(self, warm_start=None):
+        super().reset(warm_start=warm_start)
         self.t = 0
 
 
@@ -167,6 +151,6 @@ class PredictiveRegretMatchingPlus(RegretMatchingPlus):
         super().observe_utility(utility)
         self.prediction = utility
 
-    def reset(self):
-        super().reset()
+    def reset(self, warm_start=None):
+        super().reset(warm_start=warm_start)
         self.prediction = {a: 0. for a in self.action_set}

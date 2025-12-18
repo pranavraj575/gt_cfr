@@ -1,0 +1,12 @@
+{
+    'input_shape': (3, 3, 3),
+    'layers':
+        [
+            {'type':'flatten'},
+            {
+                'type':'linear',
+                'out_features': 64,
+                'bias':True,
+            }
+        ]
+}
