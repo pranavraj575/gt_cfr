@@ -103,14 +103,24 @@ class XDO(GTCFR):
                 yield n
 
 
-def plt_all(game_name, game_tag=''):
+def plt_all(game_name, args):
     for log_scale in False, True:
         for clock_time in True, False:
-            plt_one(game_name, game_tag=game_tag, log_scale=log_scale, clock_time=clock_time)
+            plt_one(game_name, log_scale=log_scale, clock_time=clock_time,args=args)
 
+def key_and_title_from_args(args):
+    if args.experiment_name is None:
+        key=game_name
+        title=game_name
+    else:
+        key=args.experiment_name.replace(' ','_').replace('(','').replace(')','')
+        title=args.experiment_name
+    return key,title
 
-def plt_one(game_name, game_tag='', log_scale=False, clock_time=False):
-    key = game_name + game_tag
+def plt_one(game_name, args, log_scale=False, clock_time=False):
+    plt.rcParams.update({'font.size': 13})
+    dpi = 200
+    key,title=key_and_title_from_args(args)
     DIR = os.path.dirname(__file__)
     save_path = os.path.join(DIR, 'output', )
     if not os.path.exists(save_path):
@@ -138,7 +148,7 @@ def plt_one(game_name, game_tag='', log_scale=False, clock_time=False):
             else:
                 plt.plot(gap_over_time['conv'], label='gtcfr')
         plt.ylabel('nash conv')
-        plt.title(key)
+        plt.title(title+' exploitability')
         if clock_time:
             plt.xlabel('clock time')
         else:
@@ -146,7 +156,7 @@ def plt_one(game_name, game_tag='', log_scale=False, clock_time=False):
         plt.legend()
         fn = os.path.join(save_path, key, 'xdo_gtcfr_cmp_plt' + ('_log' if log_scale else '') + (
             '_clock' if clock_time else '') + '.png')
-        plt.savefig(fn)
+        plt.savefig(fn, dpi=dpi, bbox_inches='tight')
         print('saving to', fn)
         # plt.show()
         plt.close()
@@ -159,46 +169,36 @@ def plt_one(game_name, game_tag='', log_scale=False, clock_time=False):
             plt.plot(np.sum(iss, axis=1)/np.sum(ass), label='xdo with ' + t)
         plt.legend()
         plt.plot([0, max_epoch], [1, 1], linestyle='--', alpha=.5)
+        plt.ylim([0, plt.ylim()[1]])
         plt.ylabel('proportion of infosets expanded')
-        plt.xlabel('epochs')
-        plt.title(key)
+        plt.xlabel('iterations (of outer loop)')
+        plt.title(title+' infosets expanded')
         fn = os.path.join(save_path, key, 'xdo_expansion_plt.png')
-        plt.savefig(fn)
+        plt.savefig(fn, dpi=dpi, bbox_inches='tight')
         print('saving to', fn)
         # plt.show()
         plt.close()
 
 
-def universal_poker_tag_to_args(tag):
-    dic = {'numRanks': 6, 'numSuits': 4, 'bettingAbstraction': 'fcpa', "stack": '1200 1200', 'blind': '100 100'}
-    if '-small_deck' in tag:
-        dic['numRanks'] = 3
-        dic['numSuits'] = 2
-
-    if '-large_deck' in tag:
-        dic['numRanks'] = 13
-
-    if '-include_half' in tag:
-        dic['bettingAbstraction'] = 'fchpa'
-
-    if '-2_hole' in tag:
-        dic['numHoleCards'] = 2
-
-    if '-3_rounds' in tag:
-        dic['numBoardCards'] = '1 1'
-
-    if '-4_rounds' in tag:
-        dic['numBoardCards'] = '1 1 1'
+def get_arg_dict(args):
+    dic=dict()
+    for key,value in args.arg:
+        if value.isdigit():
+            value=int(value)
+        dic[key]=value
     return dic
 
-
-def main(game_name, tag, game_tag='', overwrite=False):
-    key = game_name + game_tag
+def main(game_name, tag, args,overwrite=False):
+    key,_=key_and_title_from_args(args)
     DIR = os.path.dirname(__file__)
     save_path = os.path.join(DIR, 'output', key, )
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     save_file = os.path.join(save_path, 'xdo_metrics.pkl')
+    args_file=os.path.join(save_path, 'args.txt')
+    f=open(args_file,'w')
+    f.write(str(args))
+    f.close()
 
     if os.path.exists(save_file):
         f = open(save_file, 'rb')
@@ -208,7 +208,7 @@ def main(game_name, tag, game_tag='', overwrite=False):
         gap_over_time = dict()
 
     if (not overwrite) and tag in gap_over_time:
-        return
+        return False
 
     if tag == 'CFR':
         RM = RegretMatching
@@ -220,11 +220,8 @@ def main(game_name, tag, game_tag='', overwrite=False):
         RM = PredictiveRegretMatchingPlus
     else:
         raise Exception(tag)
-    args = dict()
-    if game_name == 'universal_poker':
-        args = universal_poker_tag_to_args(game_tag)
     game = pyspiel.load_game(game_name,
-                             args
+                             get_arg_dict(args=args)
                              )
 
     xdo = XDO(
@@ -250,7 +247,7 @@ def main(game_name, tag, game_tag='', overwrite=False):
         avg_sq_1 = None
         start = time.time()
 
-        for _ in range(1, 401):
+        for _ in range(1, 1500):
             i += 1
             bhv_0 = xdo.obtain_strategy(player=0)
             bhv_1 = xdo.obtain_strategy(player=1)
@@ -269,7 +266,9 @@ def main(game_name, tag, game_tag='', overwrite=False):
                 b0=bhv_0, b1=bhv_1,
                 i=i, )
             accumulated_weight += w
+
         update_times.append(time.time() - start)
+        print('iteration', ii)
         value0 = xdo.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
         value1 = xdo.compute_player_value(player=1, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
         br0, bru_0 = xdo.best_response_strategy(player=0, other_player_strategies={1: xdo.obtain_strategy(1)},
@@ -288,9 +287,8 @@ def main(game_name, tag, game_tag='', overwrite=False):
 
         expanded_infos = xdo.count_infosets()
         expanded_infosets.append(expanded_infos)
-        print('expanded infosets', expanded_infos)
-        print(ii, gap)
-        print('updates', any_updates)
+
+        print('gap', gap, 'time', update_times[-1], 'expanded infosets', expanded_infos, 'updates', any_updates)
         print('p0 val, br val, improvement', value0, bru_0, bru_0 - value0)
         print('p1 val, br val, improvement', value1, bru_1, bru_1 - value1)
         print()
@@ -305,29 +303,30 @@ def main(game_name, tag, game_tag='', overwrite=False):
     f = open(save_file, 'wb')
     pickle.dump(gap_over_time, f)
     f.close()
+    return True
 
 
 if __name__ == '__main__':
     from gt_cfr import PyspielStateStructure
     import time, os, pickle
     import matplotlib.pyplot as plt
+    import argparse
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--game',action='store',required=True,help='pyspiel game to solve')
+    parser.add_argument('--experiment-name',action='store',required=False,help='name of experiment folder',default=None)
+    parser.add_argument('--arg',nargs=2,required=False,action='append',default=[],help='args for the game')
+    args=parser.parse_args()
 
     overwrite = False
-    game_name = 'universal_poker'
-    game_tag = '-small_deck-2_hole'
+    game_name = args.game
 
-    if game_name != 'universal_poker':
-        game_tag = ''
     from regret_minimizer import RegretMatching, RegretMatchingPlus, DCFRRegretMatching, PredictiveRegretMatchingPlus
 
     tags = ['CFR', 'CFR+', 'DCFR', 'PCFR']
 
+    plt_all(game_name=game_name, args=args )
     for tag in tags:
-        plt_all(game_name=game_name, game_tag=game_tag, )
         np.random.seed(21)
-        main(game_name, tag=tag, game_tag=game_tag, overwrite=overwrite)
-
-    plt_all(game_name=game_name, game_tag=game_tag, )
-
-    # plt.plot(gap_over_time[tag][0], gap_over_time[tag][1])
-    # plt.show()
+        written=main(game_name, tag=tag, overwrite=overwrite, args=args)
+        if written:
+            plt_all(game_name=game_name, args=args )
