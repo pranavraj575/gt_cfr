@@ -106,21 +106,29 @@ class XDO(GTCFR):
 def plt_all(game_name, args):
     for log_scale in False, True:
         for clock_time in True, False:
-            plt_one(game_name, log_scale=log_scale, clock_time=clock_time,args=args)
+            plt_one(game_name, log_scale=log_scale, clock_time=clock_time, args=args)
+
 
 def key_and_title_from_args(args):
     if args.experiment_name is None:
-        key=game_name
-        title=game_name
+        key = game_name
+        title = game_name
     else:
-        key=args.experiment_name.replace(' ','_').replace('(','').replace(')','')
-        title=args.experiment_name
-    return key,title
+        key = args.experiment_name.replace(' ', '_').replace('(', '').replace(')', '')
+        title = args.experiment_name
+    return key, title
+
 
 def plt_one(game_name, args, log_scale=False, clock_time=False):
+    scale = 1.
+    if game_name == 'universal_poker':
+        scale = 100.
+        for k, v in args.arg:
+            if k == 'blind':
+                scale = float(v.split()[0])
     plt.rcParams.update({'font.size': 13})
     dpi = 200
-    key,title=key_and_title_from_args(args)
+    key, title = key_and_title_from_args(args)
     DIR = os.path.dirname(__file__)
     save_path = os.path.join(DIR, 'output', )
     if not os.path.exists(save_path):
@@ -128,27 +136,29 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
     save_file = os.path.join(save_path, key, 'xdo_metrics.pkl')
     if os.path.exists(save_file):
         f = open(save_file, 'rb')
-        gap_over_time = pickle.load(f)
+        metrics = pickle.load(f)
         f.close()
         if log_scale:
             fig, ax = plt.subplots()
             ax.set_yscale("log", nonpositive='mask')
 
-        for t in gap_over_time:
+        for t in metrics:
             if clock_time:
-                plt.plot(gap_over_time[t]['times'], gap_over_time[t]['conv'], label='xdo with ' + t)
+                plt.plot(metrics[t]['times'], np.array(metrics[t]['conv'])/scale, label='xdo with ' + t)
             else:
-                plt.plot(gap_over_time[t]['conv'], label='xdo with ' + t)
+                plt.plot(np.array(metrics[t]['conv'])/scale, label='xdo with ' + t)
 
         save_file = os.path.join(save_path, key, 'gtcfr_conv_by_time.npy')
         if os.path.exists(save_file):
-            gap_over_time = np.load(save_file)
+            metrics = np.load(save_file)
             if clock_time:
-                plt.plot(gap_over_time['times'], gap_over_time['conv'], label='gtcfr')
+                plt.plot(metrics['times'], np.array(metrics[t]['conv'])/scale, label='gtcfr')
             else:
-                plt.plot(gap_over_time['conv'], label='gtcfr')
+                plt.plot(np.array(metrics[t]['conv'])/scale, label='gtcfr')
         plt.ylabel('nash conv')
-        plt.title(title+' exploitability')
+        if game_name == 'universal_poker':
+            plt.ylabel('nash conv (bb/hand)')
+        plt.title(title + ' exploitability')
         if clock_time:
             plt.xlabel('clock time')
         else:
@@ -162,9 +172,9 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         plt.close()
 
         max_epoch = -float('inf')
-        for t in gap_over_time:
-            iss = gap_over_time[t]['expanded_infosets']
-            ass = gap_over_time[t]['all_infosets']
+        for t in metrics:
+            iss = metrics[t]['expanded_infosets']
+            ass = metrics[t]['all_infosets']
             max_epoch = max(max_epoch, len(iss) - 1)
             plt.plot(np.sum(iss, axis=1)/np.sum(ass), label='xdo with ' + t)
         plt.legend()
@@ -172,7 +182,7 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         plt.ylim([0, plt.ylim()[1]])
         plt.ylabel('proportion of infosets expanded')
         plt.xlabel('iterations (of outer loop)')
-        plt.title(title+' infosets expanded')
+        plt.title(title + ' infosets expanded')
         fn = os.path.join(save_path, key, 'xdo_expansion_plt.png')
         plt.savefig(fn, dpi=dpi, bbox_inches='tight')
         print('saving to', fn)
@@ -181,33 +191,34 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
 
 
 def get_arg_dict(args):
-    dic=dict()
-    for key,value in args.arg:
+    dic = dict()
+    for key, value in args.arg:
         if value.isdigit():
-            value=int(value)
-        dic[key]=value
+            value = int(value)
+        dic[key] = value
     return dic
 
-def main(game_name, tag, args,overwrite=False):
-    key,_=key_and_title_from_args(args)
+
+def main(game_name, tag, args, overwrite=False):
+    key, _ = key_and_title_from_args(args)
     DIR = os.path.dirname(__file__)
     save_path = os.path.join(DIR, 'output', key, )
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     save_file = os.path.join(save_path, 'xdo_metrics.pkl')
-    args_file=os.path.join(save_path, 'args.txt')
-    f=open(args_file,'w')
+    args_file = os.path.join(save_path, 'args.txt')
+    f = open(args_file, 'w')
     f.write(str(args))
     f.close()
 
     if os.path.exists(save_file):
         f = open(save_file, 'rb')
-        gap_over_time = pickle.load(f)
+        metrics = pickle.load(f)
         f.close()
     else:
-        gap_over_time = dict()
+        metrics = dict()
 
-    if (not overwrite) and tag in gap_over_time:
+    if (not overwrite) and tag in metrics:
         return False
 
     if tag == 'CFR':
@@ -295,13 +306,13 @@ def main(game_name, tag, args,overwrite=False):
     xdo.final_expansion()
     all_infosets = xdo.count_infosets()
 
-    gap_over_time[tag] = {'times': np.cumsum(update_times),
-                          'conv': nash_gaps,
-                          'expanded_infosets': np.array(expanded_infosets),
-                          'all_infosets': np.array(all_infosets)
-                          }
+    metrics[tag] = {'times': np.cumsum(update_times),
+                    'conv': nash_gaps,
+                    'expanded_infosets': np.array(expanded_infosets),
+                    'all_infosets': np.array(all_infosets)
+                    }
     f = open(save_file, 'wb')
-    pickle.dump(gap_over_time, f)
+    pickle.dump(metrics, f)
     f.close()
     return True
 
@@ -311,11 +322,13 @@ if __name__ == '__main__':
     import time, os, pickle
     import matplotlib.pyplot as plt
     import argparse
-    parser=argparse.ArgumentParser()
-    parser.add_argument('--game',action='store',required=True,help='pyspiel game to solve')
-    parser.add_argument('--experiment-name',action='store',required=False,help='name of experiment folder',default=None)
-    parser.add_argument('--arg',nargs=2,required=False,action='append',default=[],help='args for the game')
-    args=parser.parse_args()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--game', action='store', required=True, help='pyspiel game to solve')
+    parser.add_argument('--experiment-name', action='store', required=False, help='name of experiment folder',
+                        default=None)
+    parser.add_argument('--arg', nargs=2, required=False, action='append', default=[], help='args for the game')
+    args = parser.parse_args()
 
     overwrite = False
     game_name = args.game
@@ -324,9 +337,9 @@ if __name__ == '__main__':
 
     tags = ['CFR', 'CFR+', 'DCFR', 'PCFR']
 
-    plt_all(game_name=game_name, args=args )
+    plt_all(game_name=game_name, args=args)
     for tag in tags:
         np.random.seed(21)
-        written=main(game_name, tag=tag, overwrite=overwrite, args=args)
+        written = main(game_name, tag=tag, overwrite=overwrite, args=args)
         if written:
-            plt_all(game_name=game_name, args=args )
+            plt_all(game_name=game_name, args=args)
