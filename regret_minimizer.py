@@ -147,7 +147,7 @@ def solve_gamma(v, target):
     assert False
 
 
-class IoannisPRM(RegretMatchingPlus):
+class IRPRMPlus(RegretMatchingPlus):
     def __init__(self, action_set):
         super().__init__(action_set)
         self.prediction = np.zeros(self.n)

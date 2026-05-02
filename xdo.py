@@ -244,16 +244,16 @@ def main(game_name, tag, args, overwrite=False):
     if (not overwrite) and tag in metrics:
         return False
 
-    if tag == "CFR":
+    if tag == "RM":
         RM = RegretMatching
-    elif tag == "CFR+":
+    elif tag == "RM+":
         RM = RegretMatchingPlus
-    elif tag == "DCFR":
+    elif tag == "DRM":
         RM = DCFRRegretMatching
-    elif tag == "PCFR":
+    elif tag == "PRM+":
         RM = PredictiveRegretMatchingPlus
     elif tag == "IR-PRM+":
-        RM = IoannisPRM
+        RM = IRPRMPlus
     else:
         raise Exception(tag)
     game = pyspiel.load_game(game_name, get_arg_dict(args=args))
@@ -399,10 +399,10 @@ if __name__ == "__main__":
         RegretMatchingPlus,
         DCFRRegretMatching,
         PredictiveRegretMatchingPlus,
-        IoannisPRM,
+        IRPRMPlus,
     )
 
-    tags = ["CFR", "CFR+", "DCFR", "PCFR", "IR-PRM+"]
+    tags = ["RM", "RM+", "DRM", "PRM+", "IR-PRM+"]
 
     plt_all(game_name=game_name, args=args)
     for tag in tags:
