@@ -3,8 +3,7 @@ import pyspiel
 import torch
 
 
-class StateStructure():
-
+class StateStructure:
     def get_infoset_id(self):
         raise NotImplementedError
 
@@ -123,23 +122,22 @@ class PyspielStateStructure(StateStructure):
                     action = np.random.choice(actions)
                 state.apply_action(action)
             returns += np.array(state.returns())
-        return returns/n
+        return returns / n
 
 
-if __name__ == '__main__':
-    import os, ast
+if __name__ == "__main__":
+    import os
+    import ast
     from config_networks import CustomNN
 
-    g: pyspiel.Game = pyspiel.load_game('tic_tac_toe')
+    g: pyspiel.Game = pyspiel.load_game("tic_tac_toe")
     s = PyspielStateStructure(state=g.new_initial_state(), use_observation_as_infostate=True)
     s.apply_action(2)
     s.apply_action(3)
 
     print(s.get_infoset_tensor().shape)
-    config_dir = os.path.join(os.path.dirname(os.path.basename(__file__)),
-                              'config_files'
-                              )
-    f = open(os.path.join(config_dir, 'ttt_net.txt'), 'r')
+    config_dir = os.path.join(os.path.dirname(os.path.basename(__file__)), "config_files")
+    f = open(os.path.join(config_dir, "ttt_net.txt"), "r")
     ttt_net = CustomNN(structure=ast.literal_eval(f.read()))
     f.close()
     print(ttt_net)
@@ -147,7 +145,7 @@ if __name__ == '__main__':
     optim = torch.optim.Adam(ttt_net.parameters())
     for _ in range(100):
         optim.zero_grad()
-        l = torch.mean(torch.square(ttt_net(s.get_infoset_tensor())))
-        l.backward()
+        loss = torch.mean(torch.square(ttt_net(s.get_infoset_tensor())))
+        loss.backward()
         optim.step()
-        print(l.item())
+        print(loss.item())

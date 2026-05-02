@@ -6,14 +6,13 @@ tensor_tuple -> whether all data will be a tuple of tensors. If true, will sampl
 capacity -> max capacity of buffer
 
 """
-import copy
-import time
 
-import numpy as np
 import torch
 from collections import deque
 
-import torch, os, shutil, pickle
+import os
+import shutil
+import pickle
 
 
 class AbsReplayBuffer:
@@ -58,8 +57,8 @@ class AbsReplayBuffer:
 
     def sample(self, batch=None, **kwargs):
         if batch is None:
-            batch = self.config.get('batch', 128)
-        if self.config.get('tensor_tuple', False):
+            batch = self.config.get("batch", 128)
+        if self.config.get("tensor_tuple", False):
             stuff = [self.sample_one() for _ in range(batch)]
             # stuff=[(t11,t12,...,t1n),(t21,t22,...,t2n),...]
             # convert this to stack((t11,t21,t31,...)), stack((t12,t22,t32,...)), ...
@@ -74,19 +73,19 @@ class AbsReplayBuffer:
 class ReplayBufferList(AbsReplayBuffer):
     def __init__(self, config, initial_buffer=None):
         super().__init__(config, initial_buffer=initial_buffer)
-        self.buffer = deque(maxlen=self.config.get('capacity', int(1e6)))
+        self.buffer = deque(maxlen=self.config.get("capacity", int(1e6)))
 
     def clear(self):
         super().clear()
-        self.buffer = deque(maxlen=self.config.get('capacity', int(1e6)))
+        self.buffer = deque(maxlen=self.config.get("capacity", int(1e6)))
 
     def save(self, save_dir):
         super().save(save_dir=save_dir)
-        pickle.dump(self.buffer, open(os.path.join(save_dir, 'buffer.pkl'), 'wb'))
+        pickle.dump(self.buffer, open(os.path.join(save_dir, "buffer.pkl"), "wb"))
 
     def load(self, save_dir):
         super().load(save_dir=save_dir)
-        self.buffer = pickle.load(open(os.path.join(save_dir, 'buffer.pkl'), 'rb'))
+        self.buffer = pickle.load(open(os.path.join(save_dir, "buffer.pkl"), "rb"))
 
     def reset_storage(self):
         self.clear()
@@ -96,12 +95,9 @@ class ReplayBufferList(AbsReplayBuffer):
             disp = self.buffer[0]
         else:
             disp = None
-        if self.config.get('tensor_tuple', False):
+        if self.config.get("tensor_tuple", False):
             # convert
-            item = tuple(
-                t if torch.is_tensor(t) else torch.tensor(t)
-                for t in item
-            )
+            item = tuple(t if torch.is_tensor(t) else torch.tensor(t) for t in item)
         self.buffer.append(item)
         return disp
 
@@ -124,15 +120,12 @@ class ReplayBufferList(AbsReplayBuffer):
 
 
 class ReplayBufferDiskStorage(AbsReplayBuffer):
-    def __init__(self,
-                 config,
-                 initial_buffer=None
-                 ):
+    def __init__(self, config, initial_buffer=None):
         self.idx = 0
         self.size = 0
-        self.capacity = config.get('capacity',int(1e6))
-        self.device = config.get('device', None)
-        storage_dir=config.get('storage_dir', None)
+        self.capacity = config.get("capacity", int(1e6))
+        self.device = config.get("device", None)
+        storage_dir = config.get("storage_dir", None)
         if storage_dir is not None:
             self.set_storage_dir(storage_dir=storage_dir)
         super().__init__(config, initial_buffer=initial_buffer)
@@ -174,35 +167,35 @@ class ReplayBufferDiskStorage(AbsReplayBuffer):
         """
         pickle.dump(
             {
-                'size': self.size,
-                'idx': self.idx,
+                "size": self.size,
+                "idx": self.idx,
             },
-            open(self._get_file('info'), 'wb')
+            open(self._get_file("info"), "wb"),
         )
 
     def load_place(self, force=False):
-        info_file = self._get_file(name='info')
+        info_file = self._get_file(name="info")
         if os.path.exists(info_file):
-            dic = pickle.load(open(info_file, 'rb'))
-            self.size = dic['size']
-            self.idx = dic['idx']
+            dic = pickle.load(open(info_file, "rb"))
+            self.size = dic["size"]
+            self.idx = dic["idx"]
         else:
             if force:
-                print('failed to load file:', info_file)
-                print('resetting storage')
+                print("failed to load file:", info_file)
+                print("resetting storage")
                 self.reset_storage()
             else:
-                raise Exception('failed to load file: ' + info_file)
+                raise Exception("failed to load file: " + info_file)
 
     def _get_file(self, name):
-        return os.path.join(self.storage_dir, str(name) + '.pkl')
+        return os.path.join(self.storage_dir, str(name) + ".pkl")
 
     def push(self, item):
         if self.size == self.capacity:
             disp = self.__getitem__(self.idx)
         else:
             disp = None
-        pickle.dump(item, open(self._get_file(self.idx), 'wb'))
+        pickle.dump(item, open(self._get_file(self.idx), "wb"))
 
         self.size = max(self.idx + 1, self.size)
         self.idx = int((self.idx + 1) % self.capacity)
@@ -211,14 +204,13 @@ class ReplayBufferDiskStorage(AbsReplayBuffer):
         return disp
 
     def _grab_item_by_idx(self, idx, change_device=True):
-        item = pickle.load(open(self._get_file(name=idx), 'rb'))
+        item = pickle.load(open(self._get_file(name=idx), "rb"))
         return self._convert_device(item=item, change_device=change_device)
 
     def _convert_device(self, item, change_device):
         if change_device:
-            if type(item) == tuple:
-                item = tuple(self._convert_device(t, change_device=change_device)
-                             for t in item)
+            if type(item) is tuple:
+                item = tuple(self._convert_device(t, change_device=change_device) for t in item)
             elif torch.is_tensor(item):
                 item = item.to(self.device)
         return item
@@ -235,9 +227,8 @@ class ReplayBufferDiskStorage(AbsReplayBuffer):
         return self.size
 
 
-if __name__ == '__main__':
-    test = ReplayBufferDiskStorage(dict(capacity=3, storage_dir=os.path.join('replay_buffer_test')))
-    test.extend('help')
+if __name__ == "__main__":
+    test = ReplayBufferDiskStorage(dict(capacity=3, storage_dir=os.path.join("replay_buffer_test")))
+    test.extend("help")
     print([test[i] for i in range(len(test))])
     test.clear()
-

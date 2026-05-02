@@ -3,38 +3,40 @@ import numpy as np
 from collections import OrderedDict
 
 from state_structure import StateStructure, PyspielStateStructure
-from regret_minimizer import *
+from regret_minimizer import RegretMinimizer, DCFRRegretMatching, PredictiveRegretMatchingPlus, RegretMatchingPlus
 
 STORE_HISTORY = True
 
 # game node keys
-PLAYER_SEQUENCES = 'player_sequences'
-CHANCE_OUTCOMES = 'chance_outcomes'
-RETURNS = 'returns'
-EVALUATION = 'evaluation'
+PLAYER_SEQUENCES = "player_sequences"
+CHANCE_OUTCOMES = "chance_outcomes"
+RETURNS = "returns"
+EVALUATION = "evaluation"
 
 # single player dict keys
-PARENT_SEQUENCE = 'parent_sequence'
-LEGAL_ACTIONS = 'legal_actions'
-INFOSET = 'infoset'
-COND_VALS = 'cond_vals'
-COND_VAR_SUMS = 'cond_vars'
-VISIT_CT = 'visit_ct'
-CHILD_VISIT_CT = 'child_visit_ct'
-CHILD_VISIT_WEIGHTED_CT = 'child_visit_wt_ct'
+PARENT_SEQUENCE = "parent_sequence"
+LEGAL_ACTIONS = "legal_actions"
+INFOSET = "infoset"
+COND_VALS = "cond_vals"
+COND_VAR_SUMS = "cond_vars"
+VISIT_CT = "visit_ct"
+CHILD_VISIT_CT = "child_visit_ct"
+CHILD_VISIT_WEIGHTED_CT = "child_visit_wt_ct"
 
 
 class GameNode:
-    def __init__(self,
-                 parent,
-                 player,
-                 infoset_id,
-                 reach_prob_chance,
-                 legal_actions,
-                 children=None,
-                 last_action=None,
-                 terminal=False,
-                 **kwargs):
+    def __init__(
+        self,
+        parent,
+        player,
+        infoset_id,
+        reach_prob_chance,
+        legal_actions,
+        children=None,
+        last_action=None,
+        terminal=False,
+        **kwargs,
+    ):
         self.parent = parent
         self.player = player
         self.last_action = last_action
@@ -102,25 +104,27 @@ class GameNode:
 
 
 class GTCFR:
-    def __init__(self, root_state: StateStructure,
-                 rm_class: type(RegretMinimizer) = RegretMatchingPlus,
-                 rm_kwargs=None,
-                 ):
+    def __init__(
+        self,
+        root_state: StateStructure,
+        rm_class: type(RegretMinimizer) = RegretMatchingPlus,
+        rm_kwargs=None,
+    ):
         self.root_state = root_state
         self.rm_class = rm_class
         self.rm_kwargs = rm_kwargs
         if self.rm_kwargs is None:
             self.rm_kwargs = dict()
 
-        self.root = GameNode(parent=None,
-                             player=root_state.current_player(),
-                             terminal=root_state.is_terminal(),
-                             infoset_id=root_state.get_infoset_id(),
-                             reach_prob_chance=1.,
-                             legal_actions=root_state.legal_actions(),
-
-                             **{RETURNS: root_state.returns()}
-                             )
+        self.root = GameNode(
+            parent=None,
+            player=root_state.current_player(),
+            terminal=root_state.is_terminal(),
+            infoset_id=root_state.get_infoset_id(),
+            reach_prob_chance=1.0,
+            legal_actions=root_state.legal_actions(),
+            **{RETURNS: root_state.returns()},
+        )
         if self.root.is_chance_node():
             self.root.update_data(**{CHANCE_OUTCOMES: self.root_state.chance_outcomes()})
 
@@ -139,15 +143,16 @@ class GTCFR:
 
         # dict of player -> (infoset id -> regret minimizer)
         self.player_to_regret_minimizers = dict()
-        self.maybe_add_regret_minimizer(player=self.root.player,
-                                        infoset_id=self.root.infoset_id,
-                                        actions=self.root.legal_actions,
-                                        )
+        self.maybe_add_regret_minimizer(
+            player=self.root.player,
+            infoset_id=self.root.infoset_id,
+            actions=self.root.legal_actions,
+        )
 
     def make_leaf(self, node, state, action):
         assert action not in node.children
         state_prime = state.child(action)
-        action_prob_chance = 1.
+        action_prob_chance = 1.0
         if node.is_chance_node():
             action_prob_chance = node.data[CHANCE_OUTCOMES][action]
         leaf = GameNode(
@@ -156,14 +161,13 @@ class GTCFR:
             last_action=action,
             terminal=state_prime.is_terminal(),
             infoset_id=state_prime.get_infoset_id(),
-            reach_prob_chance=node.reach_prob_chance*action_prob_chance,
+            reach_prob_chance=node.reach_prob_chance * action_prob_chance,
             legal_actions=state_prime.legal_actions(),
         )
         child_player_sequences = node.data.get(PLAYER_SEQUENCES, dict())
         if not node.is_chance_node():
             child_player_sequences = child_player_sequences.copy()  # can just send the same object to chance nodes
-            child_player_sequences[node.player] = child_player_sequences.get(node.player, ()) + (
-                (node.infoset_id, action),)
+            child_player_sequences[node.player] = child_player_sequences.get(node.player, ()) + ((node.infoset_id, action),)
 
         leaf.update_data(**{PLAYER_SEQUENCES: child_player_sequences})
         if leaf.terminal:
@@ -174,10 +178,11 @@ class GTCFR:
         if len(node.children) == len(node.legal_actions) and EVALUATION in node.data:
             # clear evaluation from pre-terminal nodes
             node.data.pop(EVALUATION)
-        self.maybe_add_regret_minimizer(player=leaf.player,
-                                        infoset_id=leaf.infoset_id,
-                                        actions=leaf.legal_actions,
-                                        )
+        self.maybe_add_regret_minimizer(
+            player=leaf.player,
+            infoset_id=leaf.infoset_id,
+            actions=leaf.legal_actions,
+        )
         self.add_to_extra_structrues(leaf)
         return leaf
 
@@ -194,17 +199,16 @@ class GTCFR:
             # reasigning a value does not change order, an infoset will be ordered based on the FIRST time it is seen
             # though doing this just to be safe
             if node.infoset_id not in self.single_player_trees[node.player]:
-                self.single_player_trees[node.player][node.infoset_id] = {PARENT_SEQUENCE: node.get_parent_sequence(),
-                                                                          LEGAL_ACTIONS: node.legal_actions,
-                                                                          INFOSET: set(),
-                                                                          COND_VALS: dict(),
-                                                                          COND_VAR_SUMS: dict(),
-                                                                          VISIT_CT: 0,
-                                                                          CHILD_VISIT_CT: {a: 0 for a in
-                                                                                           node.legal_actions},
-                                                                          CHILD_VISIT_WEIGHTED_CT: {a: 0 for a in
-                                                                                                    node.legal_actions},
-                                                                          }
+                self.single_player_trees[node.player][node.infoset_id] = {
+                    PARENT_SEQUENCE: node.get_parent_sequence(),
+                    LEGAL_ACTIONS: node.legal_actions,
+                    INFOSET: set(),
+                    COND_VALS: dict(),
+                    COND_VAR_SUMS: dict(),
+                    VISIT_CT: 0,
+                    CHILD_VISIT_CT: {a: 0 for a in node.legal_actions},
+                    CHILD_VISIT_WEIGHTED_CT: {a: 0 for a in node.legal_actions},
+                }
             # add game tree node to infoset
             self.single_player_trees[node.player][node.infoset_id][INFOSET].add(node)
 
@@ -221,7 +225,7 @@ class GTCFR:
                 self.player_to_regret_minimizers[player][infoset_id] = rm
                 return rm
 
-    def reset_regret_minimizers(self,warm_start=None):
+    def reset_regret_minimizers(self, warm_start=None):
         for p, dic in self.player_to_regret_minimizers.items():
             for infoset_id, regret_min in dic.items():
                 regret_min.reset(warm_start=warm_start)
@@ -242,16 +246,24 @@ class GTCFR:
             parent_seq = node.get_parent_sequence(player=player)
             if parent_seq is not None:
                 infoset_id, parent_action = parent_seq
-                self.backprop_terminal_value(player=player,
-                                             infoset_id=infoset_id,
-                                             action_taken=parent_action,
-                                             terminal_utility=evaluation[player],
-                                             player_strategy=player_strategies[player],
-                                             sequential_form=sequential_form,
-                                             )
+                self.backprop_terminal_value(
+                    player=player,
+                    infoset_id=infoset_id,
+                    action_taken=parent_action,
+                    terminal_utility=evaluation[player],
+                    player_strategy=player_strategies[player],
+                    sequential_form=sequential_form,
+                )
 
-    def backprop_terminal_value(self, player, infoset_id, action_taken, terminal_utility, player_strategy,
-                                sequential_form=False):
+    def backprop_terminal_value(
+        self,
+        player,
+        infoset_id,
+        action_taken,
+        terminal_utility,
+        player_strategy,
+        sequential_form=False,
+    ):
         """
         terminal_CF_utility is the utility for player collected at the sample
 
@@ -293,7 +305,7 @@ class GTCFR:
         infoset_dic = self.single_player_trees[player][infoset_id]
         parent_seq = infoset_dic[PARENT_SEQUENCE]
 
-        infoset_plyr_reach_prob = 1.
+        infoset_plyr_reach_prob = 1.0
         if parent_seq is not None:
             # if not the first encountered decision point, the reach probability for player is the
             infoset_plyr_reach_prob = player_strategy[parent_seq]
@@ -304,25 +316,25 @@ class GTCFR:
         #  mean update ends up being mu_{n+1}=mu_n + w_{n+1}(x_{n+1}-mu_n)/{sum_{n+1} wi}
         # IGNORE the fact that x is not r, call it good enough
         if False:
-            w = 1/infoset_plyr_reach_prob
+            w = 1 / infoset_plyr_reach_prob
         else:
             w = 1
 
         old_weight = infoset_dic[CHILD_VISIT_WEIGHTED_CT].get(action_taken, 0)
         new_weight = old_weight + w
-        old_cond_val = infoset_dic[COND_VALS].get(action_taken, 0.)
+        old_cond_val = infoset_dic[COND_VALS].get(action_taken, 0.0)
 
         delta = terminal_utility - old_cond_val
         # infoset_dic[COND_VALS][action_taken] = (old_weight*old_cond_val + terminal_utility/infoset_plyr_reach_prob)/(new_weight)
-        new_cond_val = old_cond_val + w*delta/new_weight
+        new_cond_val = old_cond_val + w * delta / new_weight
         infoset_dic[COND_VALS][action_taken] = new_cond_val
 
         # UPDATE RUNNING VAR OF COND VALUES
 
         #  variance update ends up being S_{n+1} = S_n + w_{n+1}(x_{n+1}-mu_n)(x_{n+1}-mu_{n+1})
         #  variance is S_{n+1}/sum_n{wi}, so need to store the old weight as well
-        old_cond_var_sum, _ = infoset_dic[COND_VAR_SUMS].get(action_taken, (0., 0.))
-        new_cond_var_sum = old_cond_var_sum + w*delta*(terminal_utility - new_cond_val)
+        old_cond_var_sum, _ = infoset_dic[COND_VAR_SUMS].get(action_taken, (0.0, 0.0))
+        new_cond_var_sum = old_cond_var_sum + w * delta * (terminal_utility - new_cond_val)
         infoset_dic[COND_VAR_SUMS][action_taken] = (new_cond_var_sum, old_weight)
 
         # UPDATE WEIGHTS, VISIT COUNT, CHILD VISIT CT
@@ -331,13 +343,14 @@ class GTCFR:
         infoset_dic[CHILD_VISIT_CT][action_taken] += 1
         if parent_seq is not None:
             parent_infoset_id, parent_action_taken = parent_seq
-            self.backprop_terminal_value(player=player,
-                                         infoset_id=parent_infoset_id,
-                                         action_taken=parent_action_taken,
-                                         terminal_utility=terminal_utility,
-                                         player_strategy=player_strategy,
-                                         sequential_form=sequential_form,
-                                         )
+            self.backprop_terminal_value(
+                player=player,
+                infoset_id=parent_infoset_id,
+                action_taken=parent_action_taken,
+                terminal_utility=terminal_utility,
+                player_strategy=player_strategy,
+                sequential_form=sequential_form,
+            )
 
     def sample_leaf_spot(self, expanding_players, player_bhv_strategies, p=0.5):
         """
@@ -372,9 +385,10 @@ class GTCFR:
                     action = self.PUCT_selection(node)
                     action_idx = actions.index(action)
 
-                    support = (dist > 0)
-                    dist = (1 - p)*support/np.sum(
-                        support)  # distribution where the player strategy is positive, sums to (1-p)
+                    support = dist > 0
+                    dist = (
+                        (1 - p) * support / np.sum(support)
+                    )  # distribution where the player strategy is positive, sums to (1-p)
                     dist[action_idx] += p  # add p to the action selected by PUCT
             action = np.random.choice(actions, p=dist)
             if action not in node.children:
@@ -394,18 +408,18 @@ class GTCFR:
         player = node.player
         infoset_dic = self.single_player_trees[player][node.infoset_id]
         Nj = infoset_dic[VISIT_CT]
-        C = 1.
+        C = 1.0
         actions = list(infoset_dic[LEGAL_ACTIONS])
         Q = []
         for action in actions:
             Nja = infoset_dic[CHILD_VISIT_CT][action]
-            S, W = infoset_dic[COND_VAR_SUMS].get(action, (0., 0.))
-            if W == 0 or S/W <= 1E-3:
+            S, W = infoset_dic[COND_VAR_SUMS].get(action, (0.0, 0.0))
+            if W == 0 or S / W <= 1e-3:
                 var = 1
             else:
-                var = S/W
-            mu = infoset_dic[COND_VALS].get(action, 0.)
-            Q.append(mu + C*var*np.sqrt(Nj)/(1 + Nja))
+                var = S / W
+            mu = infoset_dic[COND_VALS].get(action, 0.0)
+            Q.append(mu + C * var * np.sqrt(Nj) / (1 + Nja))
         options = np.argwhere(Q == np.max(Q)).flatten()
         return actions[np.random.choice(options)]
 
@@ -452,7 +466,7 @@ class GTCFR:
             # adds u[(j,a)] to whatever is in Q[(j,a)]
             for a in legal_actions:
                 seq = (infoset_id, a)
-                Q[seq] = Q.get(seq, 0.) + utility.get((infoset_id, a), 0.)
+                Q[seq] = Q.get(seq, 0.0) + utility.get((infoset_id, a), 0.0)
 
             # let j',a' be the parent seq of j
             # let V_j = sum_a {b_j[a]Q[(j,a)]}
@@ -460,10 +474,10 @@ class GTCFR:
             #  since tfsdp is in topdown order, no children of j will be reached after this iteration
             #   thus, Q[(j,a)] is at its final value when it is added
             if parent_sequence is not None:
-                last_local_strategy = self.player_to_regret_minimizers[player][infoset_id].last_strat
+                last_local_strategy = self.player_to_regret_minimizers[player][infoset_id].last_strategy()
                 # only look at actions in support of last local strategy
-                V_infoset = sum(last_local_strategy[a]*Q[(infoset_id, a)] for a in last_local_strategy)
-                Q[parent_sequence] = Q.get(parent_sequence, 0.) + V_infoset
+                V_infoset = sum(last_local_strategy[a] * Q[(infoset_id, a)] for a in last_local_strategy)
+                Q[parent_sequence] = Q.get(parent_sequence, 0.0) + V_infoset
                 # add the parent to infosets with observed utilities
                 observed_infosets.add(parent_sequence[0])
 
@@ -481,16 +495,19 @@ class GTCFR:
                 self.player_to_regret_minimizers[player][infoset_id].observe_utility(utility=ute)
 
     def compute_player_value(self, player, player_sequential_strategies):
-        terminal_seq_utilities, represented_infosets = self.compute_utilities(player=player,
-                                                                              other_player_strategies=player_sequential_strategies,
-                                                                              sequential_form=True)
-        immediate_reward = 0.
+        terminal_seq_utilities, represented_infosets = self.compute_utilities(
+            player=player,
+            other_player_strategies=player_sequential_strategies,
+            sequential_form=True,
+        )
+        immediate_reward = 0.0
         if None in terminal_seq_utilities:
             immediate_reward = terminal_seq_utilities.pop(None)
         sq_strat = player_sequential_strategies[player]
 
         return immediate_reward + sum(
-            sq_strat.get(terminal_seq, 0.)*ute for terminal_seq, ute in terminal_seq_utilities.items())
+            sq_strat.get(terminal_seq, 0.0) * ute for terminal_seq, ute in terminal_seq_utilities.items()
+        )
 
     def compute_utilities(self, player, other_player_strategies, sequential_form=False):
         """
@@ -508,7 +525,7 @@ class GTCFR:
             frontier = [(self.root, dict())]
         else:
             # stores node, product of all opponent reach probabilities to that node
-            frontier = [(self.root, 1.)]
+            frontier = [(self.root, 1.0)]
 
         while frontier:
             node, opponent_reach_prob = frontier.pop()
@@ -520,15 +537,16 @@ class GTCFR:
                 if sequential_form:
                     temp = 1
                     for _, v in opponent_reach_prob.items():
-                        temp = temp*v
+                        temp = temp * v
                     opponent_reach_prob = temp
                 # if behavioral, we directly store the product, so we just need to multiply by the chance reach probability
-                external_reach_prob = opponent_reach_prob*node.reach_prob_chance
+                external_reach_prob = opponent_reach_prob * node.reach_prob_chance
 
                 # if parent seq is None, this means the game can end before player can act
                 # this is added to the value at None
-                terminal_sequence_utilities[parent_seq] = external_reach_prob*utility + terminal_sequence_utilities.get(
-                    parent_seq, 0.)
+                terminal_sequence_utilities[parent_seq] = external_reach_prob * utility + terminal_sequence_utilities.get(
+                    parent_seq, 0.0
+                )
                 represented_infosets.add(parent_seq if parent_seq is None else parent_seq[0])
                 continue
             else:
@@ -541,42 +559,46 @@ class GTCFR:
                             # if (node.infoset_id, action) is not in the other player's strategy, we assume it is 0
                             # assert (node.infoset_id, action) in other_player_strategies[node.player]
                             child_opponent_reach_prob[node.player] = other_player_strategies[node.player].get(
-                                (node.infoset_id, action), 0.)
+                                (node.infoset_id, action), 0.0
+                            )
                         else:
                             # behavioral, multiply opponent reach prob by probability opponent chooses this
-                            if not (node.infoset_id in other_player_strategies[node.player] and
-                                    action in other_player_strategies[node.player][node.infoset_id]):
+                            if not (
+                                node.infoset_id in other_player_strategies[node.player]
+                                and action in other_player_strategies[node.player][node.infoset_id]
+                            ):
                                 # in this case, assume the opponent never plays this action
                                 child_opponent_reach_prob = 0
                             else:
-                                child_opponent_reach_prob = opponent_reach_prob* \
-                                                            other_player_strategies[node.player][node.infoset_id][
-                                                                action]
+                                child_opponent_reach_prob = (
+                                    opponent_reach_prob * other_player_strategies[node.player][node.infoset_id][action]
+                                )
                     else:
                         # chance node or player node, opponent reach prob is unchanged
                         child_opponent_reach_prob = opponent_reach_prob
                     if action in node.children:
                         # we need to recurse on this child with the appropriate opponent reach prob
                         # do not go further if the opponent reach probability is zero
-                        if ((sequential_form and all(prob > 0 for _, prob in child_opponent_reach_prob.items())) or
-                                (not sequential_form and child_opponent_reach_prob > 0)):
+                        if (sequential_form and all(prob > 0 for _, prob in child_opponent_reach_prob.items())) or (
+                            not sequential_form and child_opponent_reach_prob > 0
+                        ):
                             frontier.append((node.children[action], child_opponent_reach_prob))
                     else:
                         # this action reaches outside the tree
                         # compute the external reach probability of node
                         if sequential_form:
                             # if sequential, produce the opponent reach probability by doing this product
-                            temp = 1.
+                            temp = 1.0
                             for _, v in child_opponent_reach_prob.items():
                                 temp *= v
                             child_opponent_reach_prob = temp
                         # otherwise, the opponent reach probability is already this product, and we multiply by chance reach probability
-                        external_reach_prob = child_opponent_reach_prob*node.reach_prob_chance
+                        external_reach_prob = child_opponent_reach_prob * node.reach_prob_chance
                         if node.is_chance_node():
-                            external_reach_prob = external_reach_prob*node.data[CHANCE_OUTCOMES][action]
+                            external_reach_prob = external_reach_prob * node.data[CHANCE_OUTCOMES][action]
 
                         # compute utility for player at node
-                        utility = 0.
+                        utility = 0.0
                         if EVALUATION in node.data:
                             utility = node.data[EVALUATION][player]
                         elif RETURNS in node.data:
@@ -586,16 +608,17 @@ class GTCFR:
                             # TODO: WHAT TO DO HERE?
                             #  currently, player recieves the value at node no matter what action they take
                             seq = (node.infoset_id, action)
-                            terminal_sequence_utilities[
-                                seq] = external_reach_prob*utility + terminal_sequence_utilities.get(seq, 0.)
+                            terminal_sequence_utilities[seq] = external_reach_prob * utility + terminal_sequence_utilities.get(
+                                seq, 0.0
+                            )
                             represented_infosets.add(node.infoset_id)
                         else:
                             # player recieves the value at node, weighted by the external reach probability of (NODE, ACTION)
                             # i.e. if node has one action unexpanded, the node's estimated value is weighted by the external reach probability of that action
                             parent_seq = node.get_parent_sequence(player)
-                            terminal_sequence_utilities[
-                                parent_seq] = external_reach_prob*utility + terminal_sequence_utilities.get(parent_seq,
-                                                                                                            0.)
+                            terminal_sequence_utilities[parent_seq] = (
+                                external_reach_prob * utility + terminal_sequence_utilities.get(parent_seq, 0.0)
+                            )
                             represented_infosets.add(parent_seq if parent_seq is None else parent_seq[0])
 
         return terminal_sequence_utilities, represented_infosets
@@ -619,7 +642,7 @@ class GTCFR:
         # in topdown order, so sq_strat[parent_seq] is already updated, if not None
         for infoset_id, dic in self.single_player_trees[player].items():
             parent_seq = dic[PARENT_SEQUENCE]
-            prob_flow = 1.
+            prob_flow = 1.0
             if parent_seq is not None:
                 # assert parent_seq in sq_strat, "behavioral strat must be upward closed"
                 if parent_seq not in sq_strat:
@@ -641,7 +664,7 @@ class GTCFR:
                     # each sequence is updated exactly once, since each infoset appears once in topdown ordering
                     seq = (infoset_id, action)
 
-                    sq_strat[seq] = behavioral_strat[infoset_id][action]*prob_flow
+                    sq_strat[seq] = behavioral_strat[infoset_id][action] * prob_flow
 
         return sq_strat
 
@@ -655,8 +678,10 @@ class GTCFR:
         """
         if player not in self.player_to_regret_minimizers:
             return dict()
-        behavioral = {infoset_id: regret_minimizer.next_strategy()
-                      for infoset_id, regret_minimizer in self.player_to_regret_minimizers[player].items()}
+        behavioral = {
+            infoset_id: regret_minimizer.next_strategy()
+            for infoset_id, regret_minimizer in self.player_to_regret_minimizers[player].items()
+        }
         if sequence_form:
             return self.convert_to_sequence_form(player=player, behavioral_strat=behavioral)
         else:
@@ -666,13 +691,19 @@ class GTCFR:
         # assumes constant (zero) sum
         gap = 0
         for player in player_strategies:
-            gap += self.best_response_value(player=player, other_player_strategies=player_strategies,
-                                            sequential_form=sequential_form)
+            gap += self.best_response_value(
+                player=player,
+                other_player_strategies=player_strategies,
+                sequential_form=sequential_form,
+            )
         return gap - constant_for_constant_sum
 
     def best_response_value(self, player, other_player_strategies, sequential_form=False):
-        utilities, rep_infosets = self.compute_utilities(player=player, other_player_strategies=other_player_strategies,
-                                                         sequential_form=sequential_form)
+        utilities, rep_infosets = self.compute_utilities(
+            player=player,
+            other_player_strategies=other_player_strategies,
+            sequential_form=sequential_form,
+        )
         if player in self.single_player_trees:
             for infoset_id, dic in reversed(self.single_player_trees[player].items()):
                 parent_seq, legal_actions = dic[PARENT_SEQUENCE], dic[LEGAL_ACTIONS]
@@ -680,28 +711,36 @@ class GTCFR:
                 if infoset_id not in rep_infosets:  # all utilities will be zero
                     # assert all([utilities.get((infoset_id, a), 0.)==0 for a in legal_actions])
                     continue
-                max_ev = max(utilities.get((infoset_id, a), 0.) for a in legal_actions)
-                utilities[parent_seq] = utilities.get(parent_seq, 0.) + max_ev
+                max_ev = max(utilities.get((infoset_id, a), 0.0) for a in legal_actions)
+                utilities[parent_seq] = utilities.get(parent_seq, 0.0) + max_ev
                 rep_infosets.add(parent_seq if parent_seq is None else parent_seq[0])
         # None is the root node, which will collect the overall best response value, in addition to the utility
         #  of the game just immediately ending (leftover from compute_utilities)
         return utilities[None]
 
-    def best_response_strategy(self, player, other_player_strategies, sequential_form=False,
-                               return_sequential_form=False):
+    def best_response_strategy(
+        self,
+        player,
+        other_player_strategies,
+        sequential_form=False,
+        return_sequential_form=False,
+    ):
         # TODO: optimize when zeros
-        utilities, rep_infosets = self.compute_utilities(player=player, other_player_strategies=other_player_strategies,
-                                                         sequential_form=sequential_form)
+        utilities, rep_infosets = self.compute_utilities(
+            player=player,
+            other_player_strategies=other_player_strategies,
+            sequential_form=sequential_form,
+        )
         strategy = dict()
         for infoset_id, dic in reversed(self.single_player_trees[player].items()):
             parent_seq, legal_actions = dic[PARENT_SEQUENCE], dic[LEGAL_ACTIONS]
 
-            strategy[infoset_id] = {a: 0. for a in legal_actions}
-            best_action = max(legal_actions, key=lambda a: utilities.get((infoset_id, a), 0.))
-            strategy[infoset_id][best_action] = 1.
+            strategy[infoset_id] = {a: 0.0 for a in legal_actions}
+            best_action = max(legal_actions, key=lambda a: utilities.get((infoset_id, a), 0.0))
+            strategy[infoset_id][best_action] = 1.0
 
-            max_ev = utilities.get((infoset_id, best_action), 0.)
-            utilities[parent_seq] = utilities.get(parent_seq, 0.) + max_ev
+            max_ev = utilities.get((infoset_id, best_action), 0.0)
+            utilities[parent_seq] = utilities.get(parent_seq, 0.0) + max_ev
         if return_sequential_form:
             strategy = self.convert_to_sequence_form(player=player, behavioral_strat=strategy)
         return strategy, utilities[None]
@@ -716,8 +755,10 @@ class GTCFR:
         if player not in self.player_to_regret_minimizers:
             return dict()
 
-        behavioral = {infoset_id: {a: 1/len(regret_minimizer.action_set) for a in regret_minimizer.action_set}
-                      for infoset_id, regret_minimizer in self.player_to_regret_minimizers[player].items()}
+        behavioral = {
+            infoset_id: {a: 1 / len(regret_minimizer.action_set) for a in regret_minimizer.action_set}
+            for infoset_id, regret_minimizer in self.player_to_regret_minimizers[player].items()
+        }
         if sequence_form:
             return self.convert_to_sequence_form(player=player, behavioral_strat=behavioral)
         else:
@@ -737,10 +778,11 @@ class GTCFR:
             legal_actions = node.legal_actions
             for action in legal_actions:
                 if action not in node.children:
-                    leaf = self.make_leaf(node=node,
-                                          state=state.clone(),
-                                          action=action,
-                                          )
+                    leaf = self.make_leaf(
+                        node=node,
+                        state=state.clone(),
+                        action=action,
+                    )
                     unexpanded.append(leaf)
                 else:
                     unexpanded.append(node.children[action])
@@ -750,7 +792,8 @@ class GTCFR:
         for a in node.get_history():
             state.apply_action(a)
         return state
-    def iterate_nodes(self,node=None):
+
+    def iterate_nodes(self, node=None):
         """
         debug method, iterate over nodes
         """
@@ -762,16 +805,18 @@ class GTCFR:
                 yield n
 
     def count_nodes(self, node=None):
-        s=0
+        s = 0
         for _ in self.iterate_nodes(node):
-            s+=1
+            s += 1
         return s
-    def count_infosets(self,node=None):
-        all_infosets=[set() for player in self.single_player_trees]
+
+    def count_infosets(self, node=None):
+        all_infosets = [set() for player in self.single_player_trees]
         for node in self.iterate_nodes(node=node):
             if (not node.terminal) and (not node.is_chance_node()):
                 all_infosets[node.player].add(node.infoset_id)
         return [len(infosets) for infosets in all_infosets]
+
     def is_valid_sf_strat(self, player, strategy):
         if player not in self.single_player_trees:
             assert len(strategy) == 0, "this player does not have a decision node yet"
@@ -782,18 +827,18 @@ class GTCFR:
             sum_prob = 0
             for action in legal_actions:
                 if (infoset_id, action) not in strategy:
-                    assert not any((infoset_id, a) in strategy for a in
-                                   legal_actions), "only part of the actions in an infoset are represented in policy"
+                    assert not any((infoset_id, a) in strategy for a in legal_actions), (
+                        "only part of the actions in an infoset are represented in policy"
+                    )
                     sum_prob = None
                     break
                 else:
                     sum_prob += strategy[(infoset_id, action)]
-            prob_flow = 1.
+            prob_flow = 1.0
             if parent_seq is not None:
                 prob_flow = strategy[parent_seq]
 
-            assert np.isclose(sum_prob,
-                              prob_flow), f"probability sum {sum_prob} is not the parent probabilty flow {prob_flow}"
+            assert np.isclose(sum_prob, prob_flow), f"probability sum {sum_prob} is not the parent probabilty flow {prob_flow}"
         for infoset_id, action in strategy:
             assert infoset_id in self.single_player_trees[player], f"infoset not found: {infoset_id}"
             assert action in self.single_player_trees[player][infoset_id][LEGAL_ACTIONS], f"action invalid: {action}"
@@ -801,7 +846,7 @@ class GTCFR:
         return True
 
 
-def enforce_sq_constraints(single_player_tree, sq_strat, default_prob_flow=1.):
+def enforce_sq_constraints(single_player_tree, sq_strat, default_prob_flow=1.0):
     for infoset_id, dic in single_player_tree.items():
         legal_actions = dic[LEGAL_ACTIONS]
         if any((infoset_id, a) in sq_strat for a in legal_actions):
@@ -809,23 +854,31 @@ def enforce_sq_constraints(single_player_tree, sq_strat, default_prob_flow=1.):
             prob_flow = default_prob_flow
             if parent_seq is not None:
                 prob_flow = sq_strat[parent_seq]
-            s = sum(sq_strat.get((infoset_id, a), 0.) for a in legal_actions)
+            s = sum(sq_strat.get((infoset_id, a), 0.0) for a in legal_actions)
 
             if not np.isclose(s, prob_flow):
                 if s == 0:
                     print(prob_flow)
                     print([sq_strat.get((infoset_id, a), None) for a in legal_actions])
                     raise Exception("HERE")
-                c = prob_flow/s
+                c = prob_flow / s
                 for a in legal_actions:
                     if (infoset_id, a) in sq_strat:
-                        sq_strat[(infoset_id, a)] = sq_strat[(infoset_id, a)]*c
+                        sq_strat[(infoset_id, a)] = sq_strat[(infoset_id, a)] * c
 
 
-def update_and_produce_avg_strats(sum_sq_0, sum_sq_1,
-                                  x0, x1, b0, b1,
-                                  accumulated_weight, gtcfr,
-                                  i, enforce_sq_form=False):
+def update_and_produce_avg_strats(
+    sum_sq_0,
+    sum_sq_1,
+    x0,
+    x1,
+    b0,
+    b1,
+    accumulated_weight,
+    gtcfr,
+    i,
+    enforce_sq_form=False,
+):
     # needs behavioral strats for this case:
     #  say infoset j was just added (i.e. it does not exist in sum_sq_0)
     #  then we would like to use x0's values for infoset j, and enforce probability constraints to make this a valid sf strategy
@@ -836,12 +889,12 @@ def update_and_produce_avg_strats(sum_sq_0, sum_sq_1,
     #  only need to reweight the infosets that do not appear in sum_sq_0
     for seq in x0:
         if seq in sum_sq_0:
-            sum_sq_0[seq] = sum_sq_0[seq] + w*x0[seq]
+            sum_sq_0[seq] = sum_sq_0[seq] + w * x0[seq]
         else:
             sum_sq_0[seq] = b0[seq[0]][seq[1]]
     for seq in x1:
         if seq in sum_sq_1:
-            sum_sq_1[seq] = sum_sq_1[seq] + w*x1[seq]
+            sum_sq_1[seq] = sum_sq_1[seq] + w * x1[seq]
         else:
             sum_sq_1[seq] = b1[seq[0]][seq[1]]
 
@@ -850,41 +903,47 @@ def update_and_produce_avg_strats(sum_sq_0, sum_sq_1,
         if p not in gtcfr.single_player_trees:
             continue
         if enforce_sq_form:
-            enforce_sq_constraints(sq_strat=sum_sq,
-                                   single_player_tree=gtcfr.single_player_trees[p],
-                                   default_prob_flow=accumulated_weight + w)
+            enforce_sq_constraints(
+                sq_strat=sum_sq,
+                single_player_tree=gtcfr.single_player_trees[p],
+                default_prob_flow=accumulated_weight + w,
+            )
 
-    avg_sq_0 = {k: v/(accumulated_weight + w) for (k, v) in sum_sq_0.items()}
-    avg_sq_1 = {k: v/(accumulated_weight + w) for (k, v) in sum_sq_1.items()}
+    avg_sq_0 = {k: v / (accumulated_weight + w) for (k, v) in sum_sq_0.items()}
+    avg_sq_1 = {k: v / (accumulated_weight + w) for (k, v) in sum_sq_1.items()}
     return avg_sq_0, avg_sq_1, w
 
 
-if __name__ == '__main__':
-    import time, os
+if __name__ == "__main__":
+    import time
+    import os
     import matplotlib.pyplot as plt
 
-    game_name = 'leduc_poker'
+    game_name = "leduc_poker"
     game = pyspiel.load_game(game_name)
 
     gtcfr = GTCFR(
         root_state=PyspielStateStructure(game.new_initial_state()),
         rm_class=PredictiveRegretMatchingPlus,
-        #rm_kwargs={'alpha': 1.5}
+        # rm_kwargs={'alpha': 1.5}
     )
     do_full = True
     full_gtcfr = GTCFR(
         root_state=PyspielStateStructure(game.new_initial_state()),
         rm_class=DCFRRegretMatching,
-        rm_kwargs={'alpha': 1.5}
+        rm_kwargs={"alpha": 1.5},
     )
     full_gtcfr.create_full_tree()
-    print('full tree size:', full_gtcfr.count_nodes())
-    print('num infosets:', {p: len(rms) for p, rms in full_gtcfr.player_to_regret_minimizers.items()})
+    print("full tree size:", full_gtcfr.count_nodes())
+    print(
+        "num infosets:",
+        {p: len(rms) for p, rms in full_gtcfr.player_to_regret_minimizers.items()},
+    )
     sum_sq_0 = dict()
     sum_sq_1 = dict()
     full_sum_sq_0 = dict()
     full_sum_sq_1 = dict()
-    accumulated_weight = 0.
+    accumulated_weight = 0.0
     full_update_times = []
     update_times = []
     extended_nash_gaps = []
@@ -893,17 +952,16 @@ if __name__ == '__main__':
     for i in range(1, 10000):
         start = time.time()
         # GTCFR update, select and expand a leaf
-        expanding_player = i%2
+        expanding_player = i % 2
 
         player_bhv_strategies = {p: gtcfr.obtain_strategy(player=p) for p in [0, 1]}
-        node, action = gtcfr.sample_leaf_spot(player_bhv_strategies=player_bhv_strategies,
-                                              expanding_players=[expanding_player],
-                                              )
+        node, action = gtcfr.sample_leaf_spot(
+            player_bhv_strategies=player_bhv_strategies,
+            expanding_players=[expanding_player],
+        )
         state = gtcfr.state_of(node)
         if not node.terminal:
-            leaf = gtcfr.make_leaf(node=node,
-                                   state=state,
-                                   action=action)
+            leaf = gtcfr.make_leaf(node=node, state=state, action=action)
         else:
             leaf = node
         gtcfr.evaluate_and_push(
@@ -938,74 +996,101 @@ if __name__ == '__main__':
                 full_avg_sq_0, full_avg_sq_1, w = update_and_produce_avg_strats(
                     gtcfr=tree,
                     accumulated_weight=accumulated_weight,
-                    sum_sq_0=full_sum_sq_0, sum_sq_1=full_sum_sq_1,
-                    x0=x0, x1=x1,
-                    b0=bhv_0, b1=bhv_1,
-                    i=i, enforce_sq_form=True)
+                    sum_sq_0=full_sum_sq_0,
+                    sum_sq_1=full_sum_sq_1,
+                    x0=x0,
+                    x1=x1,
+                    b0=bhv_0,
+                    b1=bhv_1,
+                    i=i,
+                    enforce_sq_form=True,
+                )
                 full_update_times.append(time.time() - start)
 
             else:
                 avg_sq_0, avg_sq_1, w = update_and_produce_avg_strats(
                     gtcfr=tree,
                     accumulated_weight=accumulated_weight,
-                    sum_sq_0=sum_sq_0, sum_sq_1=sum_sq_1,
-                    x0=x0, x1=x1,
-                    b0=bhv_0, b1=bhv_1,
-                    i=i, enforce_sq_form=True)
-                update_times[-1] += (time.time() - start)
+                    sum_sq_0=sum_sq_0,
+                    sum_sq_1=sum_sq_1,
+                    x0=x0,
+                    x1=x1,
+                    b0=bhv_0,
+                    b1=bhv_1,
+                    i=i,
+                    enforce_sq_form=True,
+                )
+                update_times[-1] += time.time() - start
 
         accumulated_weight += w
         # produce gtcfr strategies for full game by setting the non-visited nodes to uniform
         # i.e. start with uniform sf strategy, update the infosets seen in avg strategies, and enforce prob flow
         extended_sf_0 = full_gtcfr.uniform_strategy(player=0, sequence_form=True)
         extended_sf_0.update(avg_sq_0)
-        enforce_sq_constraints(single_player_tree=full_gtcfr.single_player_trees[0],
-                               sq_strat=extended_sf_0,
-                               default_prob_flow=1.
-                               )
+        enforce_sq_constraints(
+            single_player_tree=full_gtcfr.single_player_trees[0],
+            sq_strat=extended_sf_0,
+            default_prob_flow=1.0,
+        )
 
         extended_sf_1 = full_gtcfr.uniform_strategy(player=1, sequence_form=True)
         extended_sf_1.update(avg_sq_1)
-        enforce_sq_constraints(single_player_tree=full_gtcfr.single_player_trees[1],
-                               sq_strat=extended_sf_1,
-                               default_prob_flow=1.
-                               )
+        enforce_sq_constraints(
+            single_player_tree=full_gtcfr.single_player_trees[1],
+            sq_strat=extended_sf_1,
+            default_prob_flow=1.0,
+        )
 
         value0 = gtcfr.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
-        extended_value0_agnt_uniform = full_gtcfr.compute_player_value(player=0,
-                                                                       player_sequential_strategies={
-                                                                           0: extended_sf_0,
-                                                                           1: full_gtcfr.uniform_strategy(player=1,
-                                                                                                          sequence_form=True)
-                                                                       })
+        extended_value0_agnt_uniform = full_gtcfr.compute_player_value(
+            player=0,
+            player_sequential_strategies={
+                0: extended_sf_0,
+                1: full_gtcfr.uniform_strategy(player=1, sequence_form=True),
+            },
+        )
 
         # gap = gtcfr.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
-        extended_gap = full_gtcfr.constant_sum_nash_gap(player_strategies={0: extended_sf_0, 1: extended_sf_1},
-                                                        sequential_form=True)
+        extended_gap = full_gtcfr.constant_sum_nash_gap(
+            player_strategies={0: extended_sf_0, 1: extended_sf_1}, sequential_form=True
+        )
         extended_nash_gaps.append(extended_gap)
         if do_full:
-            full_gap = full_gtcfr.constant_sum_nash_gap(player_strategies={0: full_avg_sq_0, 1: full_avg_sq_1},
-                                                        sequential_form=True)
+            full_gap = full_gtcfr.constant_sum_nash_gap(
+                player_strategies={0: full_avg_sq_0, 1: full_avg_sq_1},
+                sequential_form=True,
+            )
         else:
             full_gap = None
-        print(i, '(full,gt) nash gaps:', (full_gap, extended_gap),
-              '; p0 tree val:', value0,
-              '; ext. p0 vs. uniform:', extended_value0_agnt_uniform)
+        print(
+            i,
+            "(full,gt) nash gaps:",
+            (full_gap, extended_gap),
+            "; p0 tree val:",
+            value0,
+            "; ext. p0 vs. uniform:",
+            extended_value0_agnt_uniform,
+        )
     DIR = os.path.dirname(__file__)
-    save_path = os.path.join(DIR, 'output', )
+    save_path = os.path.join(
+        DIR,
+        "output",
+    )
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-    save_file = os.path.join(save_path, 'gtcfr_' + game_name + '_conv_by_time')
-    gap_over_time = np.array([np.cumsum(update_times),
-                              extended_nash_gaps])
+    save_file = os.path.join(save_path, "gtcfr_" + game_name + "_conv_by_time")
+    gap_over_time = np.array([np.cumsum(update_times), extended_nash_gaps])
     np.save(save_file, gap_over_time)
     plt.plot(gap_over_time[0], gap_over_time[1])
-    plt.savefig(os.path.join(save_path, 'gtcfr_' + game_name + '_conv_by_time.png'))
+    plt.savefig(os.path.join(save_path, "gtcfr_" + game_name + "_conv_by_time.png"))
     plt.show()
-    print('expanded tree size:', gtcfr.count_nodes())
-    print('num infosets:', {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()})
-    print('gtcfr total update time', sum(update_times))
-    print('cfr total update time', sum(full_update_times))
+    print("expanded tree size:", gtcfr.count_nodes())
+    print(
+        "num infosets:",
+        {p: len(rms) for p, rms in gtcfr.player_to_regret_minimizers.items()},
+    )
+    print("gtcfr total update time", sum(update_times))
+    print("cfr total update time", sum(full_update_times))
     player = 1
     # play against the extended gtcfr strategies (uniform when not in the tree)
     opp_policies = {0: extended_sf_0, 1: extended_sf_1}
@@ -1017,14 +1102,14 @@ if __name__ == '__main__':
             elif s.current_player() == player:
                 print(s.state.observation_string())
                 for a in s.legal_actions():
-                    print(str(a) + ':', s.state.action_to_string(a))
+                    print(str(a) + ":", s.state.action_to_string(a))
                 action = None
                 while True:
-                    action = input('type action:')
+                    action = input("type action:")
                     if action in [str(a) for a in s.legal_actions()]:
                         break
                     else:
-                        print('bad choice, try again')
+                        print("bad choice, try again")
                 for a in s.legal_actions():
                     if str(a) == action:
                         action = a
@@ -1035,20 +1120,20 @@ if __name__ == '__main__':
                 p = np.array([prob for _, prob in policy.items()])
                 print(p)
 
-                action = np.random.choice([a for a, _ in policy.items()], p=p/np.sum(p))
+                action = np.random.choice([a for a, _ in policy.items()], p=p / np.sum(p))
             s.apply_action(action=action)
 
-        print('your result:', s.returns()[player])
-        if input('quit [y/n]: ').lower() == 'y':
+        print("your result:", s.returns()[player])
+        if input("quit [y/n]: ").lower() == "y":
             break
 
     node = gtcfr.root
 
     s = PyspielStateStructure(game.new_initial_state())
     print(s.state)
-    print('infoset:', s.get_infoset_id())
+    print("infoset:", s.get_infoset_id())
     print(node.player)
-    print('chance reach prob:', node.reach_prob_chance)
+    print("chance reach prob:", node.reach_prob_chance)
     print(node.get_history())
     print(node.get_full_player_sequence(0))
     print(node.get_full_player_sequence(1))
@@ -1058,9 +1143,9 @@ if __name__ == '__main__':
         node = node.children[a]
         s.apply_action(a)
         print(s.state)
-        print('infoset:', s.get_infoset_id())
+        print("infoset:", s.get_infoset_id())
         print(node.player)
-        print('chance reach prob:', node.reach_prob_chance)
+        print("chance reach prob:", node.reach_prob_chance)
         print(node.get_history())
         print(node.get_full_player_sequence(0))
         print(node.get_full_player_sequence(1))

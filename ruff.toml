@@ -1,0 +1,10 @@
+indent-width = 4
+
+line-length = 130
+[lint.pycodestyle]
+max-line-length = 200
+
+[lint]
+ignore = [
+    "E741",
+]
