@@ -164,7 +164,10 @@ class IRPRMPlus(RegretMatchingPlus):
         regrets = np.maximum(0, self.cum_regrets)
 
         regret_sum = np.sum(regrets)
-        self.last_strat = regrets / regret_sum
+        if regret_sum <= 0:
+            self.last_strat = np.ones(self.n) / self.n
+        else:
+            self.last_strat = regrets / regret_sum
         return self.last_strategy()
 
     def observe_utility(self, utility):

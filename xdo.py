@@ -155,7 +155,7 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
                 plt.plot(
                     metrics[t]["times"],
                     np.array(metrics[t]["conv"]) / scale,
-                    label="xdo with " + t,
+                    label="XDO with " + t,
                 )
             else:
                 plt.plot(np.array(metrics[t]["conv"]) / scale, label="xdo with " + t)
