@@ -178,7 +178,7 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         if clock_time:
             plt.xlabel("clock time")
         else:
-            plt.xlabel("epochs")
+            plt.xlabel("iterations (of outer loop)")
         plt.legend()
         fn = os.path.join(
             save_path,

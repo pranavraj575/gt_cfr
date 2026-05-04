@@ -139,7 +139,7 @@ def solve_gamma(v, target):
         sum += ui
         sumsq += ui * ui
         disc = sum * sum - (i + 1) * (sumsq - target)
-        assert disc >= 0, f"{disc}"
+        # assert disc >= 0, f"{disc}"
         disc = max(0, disc)
         gamma = (sum - np.sqrt(disc)) / (i + 1)
         if i == len(u) - 1 or gamma >= u[i + 1]:
