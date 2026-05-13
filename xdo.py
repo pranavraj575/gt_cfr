@@ -10,10 +10,10 @@ RESTRICTED = "restricted_actions"
 
 class XDO(GTCFR):
     def __init__(
-        self,
-        root_state: StateStructure,
-        rm_class: type(RegretMinimizer) = RegretMatchingPlus,
-        rm_kwargs=None,
+            self,
+            root_state: StateStructure,
+            rm_class: type(RegretMinimizer) = RegretMatchingPlus,
+            rm_kwargs=None,
     ):
         super().__init__(root_state=root_state, rm_class=rm_class, rm_kwargs=rm_kwargs)
         self.create_full_tree()
@@ -40,7 +40,8 @@ class XDO(GTCFR):
                     force_reset=True,
                 )
 
-    def assert_regret_minimizers_have_correct_support(self, min_restricted_actions=1, max_restricted_actions=float("inf")):
+    def assert_regret_minimizers_have_correct_support(self, min_restricted_actions=1,
+                                                      max_restricted_actions=float("inf")):
         for player, single_player_tree in self.single_player_trees.items():
             for infoset_id, dic in single_player_tree.items():
                 restricted = self.player_to_regret_minimizers[player][infoset_id].action_set
@@ -65,7 +66,7 @@ class XDO(GTCFR):
                 prob_flow = 1.0
                 if parent_seq is not None:
                     prob_flow = strategy[parent_seq]
-                if strategy[seq] > epsilon * prob_flow:
+                if strategy[seq] > epsilon*prob_flow:
                     # strategy(seq)/prob_flow > epsilon, but dodge the /0 error
                     if infoset_id not in support:
                         support[infoset_id] = set()
@@ -124,6 +125,10 @@ def key_and_title_from_args(args):
     return key, title
 
 
+def label_map(s):
+    return s.replace('RM', "CFR")
+
+
 def plt_one(game_name, args, log_scale=False, clock_time=False):
     scale = 1.0
     if game_name == "universal_poker":
@@ -154,11 +159,11 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
             if clock_time:
                 plt.plot(
                     metrics[t]["times"],
-                    np.array(metrics[t]["conv"]) / scale,
+                    np.array(metrics[t]["conv"])/scale,
                     label="XDO with " + t,
                 )
             else:
-                plt.plot(np.array(metrics[t]["conv"]) / scale, label="xdo with " + t)
+                plt.plot(np.array(metrics[t]["conv"])/scale, label="xdo with " + label_map(t))
 
         save_file = os.path.join(save_path, key, "gtcfr_conv_by_time.npy")
         if os.path.exists(save_file):
@@ -166,11 +171,11 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
             if clock_time:
                 plt.plot(
                     metrics["times"],
-                    np.array(metrics[t]["conv"]) / scale,
+                    np.array(metrics[t]["conv"])/scale,
                     label="gtcfr",
                 )
             else:
-                plt.plot(np.array(metrics[t]["conv"]) / scale, label="gtcfr")
+                plt.plot(np.array(metrics[t]["conv"])/scale, label="gtcfr")
         plt.ylabel("nash conv")
         if game_name == "universal_poker":
             plt.ylabel("nash conv (bb/hand)")
@@ -195,7 +200,7 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
             iss = metrics[t]["expanded_infosets"]
             ass = metrics[t]["all_infosets"]
             max_epoch = max(max_epoch, len(iss) - 1)
-            plt.plot(np.sum(iss, axis=1) / np.sum(ass), label="xdo with " + t)
+            plt.plot(np.sum(iss, axis=1)/np.sum(ass), label="xdo with " + label_map(t))
         plt.legend()
         plt.plot([0, max_epoch], [1, 1], linestyle="--", alpha=0.5)
         plt.ylim([0, plt.ylim()[1]])

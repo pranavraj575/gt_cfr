@@ -7,6 +7,6 @@ python xdo.py --game universal_poker --experiment-name "universal poker fine abs
 python xdo.py --game universal_poker --experiment-name "universal poker";
 python xdo.py --game universal_poker --experiment-name "universal poker small deck 2 hole" --arg numRanks 3 --arg numSuits 2 --arg numHoleCards 2;
 
-python xdo.py --game universal_poker --experiment-name "universal poker full deck fine abstraction (8)" --arg numRanks 13 --arg numSuits 4 --arg stack "8 8" --arg blind "1 1" --arg bettingAbstraction fullgame;
-python xdo.py --game universal_poker --experiment-name "universal poker full deck 3 rounds" --arg numRanks 13 --arg numSuits 4 --arg numBoardCards "0 1 1" --arg numRounds 3;
-python xdo.py --game universal_poker --experiment-name "universal poker full deck 2 hole" --arg numRanks 13 --arg numSuits 4 --arg numHoleCards 2;
+# python xdo.py --game universal_poker --experiment-name "universal poker full deck fine abstraction (8)" --arg numRanks 13 --arg numSuits 4 --arg stack "8 8" --arg blind "1 1" --arg bettingAbstraction fullgame;
+# python xdo.py --game universal_poker --experiment-name "universal poker full deck 3 rounds" --arg numRanks 13 --arg numSuits 4 --arg numBoardCards "0 1 1" --arg numRounds 3;
+# python xdo.py --game universal_poker --experiment-name "universal poker full deck 2 hole" --arg numRanks 13 --arg numSuits 4 --arg numHoleCards 2;
