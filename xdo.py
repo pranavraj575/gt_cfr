@@ -10,10 +10,10 @@ RESTRICTED = "restricted_actions"
 
 class XDO(GTCFR):
     def __init__(
-            self,
-            root_state: StateStructure,
-            rm_class: type(RegretMinimizer) = RegretMatchingPlus,
-            rm_kwargs=None,
+        self,
+        root_state: StateStructure,
+        rm_class: type(RegretMinimizer) = RegretMatchingPlus,
+        rm_kwargs=None,
     ):
         super().__init__(root_state=root_state, rm_class=rm_class, rm_kwargs=rm_kwargs)
         self.create_full_tree()
@@ -40,8 +40,7 @@ class XDO(GTCFR):
                     force_reset=True,
                 )
 
-    def assert_regret_minimizers_have_correct_support(self, min_restricted_actions=1,
-                                                      max_restricted_actions=float("inf")):
+    def assert_regret_minimizers_have_correct_support(self, min_restricted_actions=1, max_restricted_actions=float("inf")):
         for player, single_player_tree in self.single_player_trees.items():
             for infoset_id, dic in single_player_tree.items():
                 restricted = self.player_to_regret_minimizers[player][infoset_id].action_set
@@ -66,7 +65,7 @@ class XDO(GTCFR):
                 prob_flow = 1.0
                 if parent_seq is not None:
                     prob_flow = strategy[parent_seq]
-                if strategy[seq] > epsilon*prob_flow:
+                if strategy[seq] > epsilon * prob_flow:
                     # strategy(seq)/prob_flow > epsilon, but dodge the /0 error
                     if infoset_id not in support:
                         support[infoset_id] = set()
@@ -126,7 +125,7 @@ def key_and_title_from_args(args):
 
 
 def label_map(s):
-    return s.replace('RM', "CFR")
+    return s.replace("RM", "CFR")
 
 
 def plt_one(game_name, args, log_scale=False, clock_time=False):
@@ -151,19 +150,14 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         f = open(save_file, "rb")
         metrics = pickle.load(f)
         f.close()
+        fig, ax = plt.subplots()
         if log_scale:
-            fig, ax = plt.subplots()
             ax.set_yscale("log", nonpositive="mask")
-
         for t in metrics:
             if clock_time:
-                plt.plot(
-                    metrics[t]["times"],
-                    np.array(metrics[t]["conv"])/scale,
-                    label="XDO with " + t,
-                )
+                plt.plot(metrics[t]["times"][:-1], np.array(metrics[t]["conv"]) / scale, label="XDO with " + t)
             else:
-                plt.plot(np.array(metrics[t]["conv"])/scale, label="xdo with " + label_map(t))
+                plt.plot(np.array(metrics[t]["conv"]) / scale, label="XDO with " + label_map(t))
 
         save_file = os.path.join(save_path, key, "gtcfr_conv_by_time.npy")
         if os.path.exists(save_file):
@@ -171,11 +165,11 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
             if clock_time:
                 plt.plot(
                     metrics["times"],
-                    np.array(metrics[t]["conv"])/scale,
+                    np.array(metrics[t]["conv"]) / scale,
                     label="gtcfr",
                 )
             else:
-                plt.plot(np.array(metrics[t]["conv"])/scale, label="gtcfr")
+                plt.plot(np.array(metrics[t]["conv"]) / scale, label="gtcfr")
         plt.ylabel("nash conv")
         if game_name == "universal_poker":
             plt.ylabel("nash conv (bb/hand)")
@@ -200,7 +194,8 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
             iss = metrics[t]["expanded_infosets"]
             ass = metrics[t]["all_infosets"]
             max_epoch = max(max_epoch, len(iss) - 1)
-            plt.plot(np.sum(iss, axis=1)/np.sum(ass), label="xdo with " + label_map(t))
+            plt.plot(np.sum(iss, axis=1) / np.sum(ass), label="XDO with " + label_map(t))
+
         plt.legend()
         plt.plot([0, max_epoch], [1, 1], linestyle="--", alpha=0.5)
         plt.ylim([0, plt.ylim()[1]])
@@ -210,6 +205,25 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         fn = os.path.join(save_path, key, "xdo_expansion_plt.png")
         plt.savefig(fn, dpi=dpi, bbox_inches="tight")
         print("saving to", fn)
+        plt.close()
+
+        fig, ax = plt.subplots()
+        save_debug_plot = False
+        for t in metrics:
+            final_gaps = metrics[t]["all_mid_run_gaps"][-1]
+            if not final_gaps:
+                continue
+            else:
+                save_debug_plot = True
+                plt.plot(final_gaps, label="XDO with " + label_map(t))
+        if save_debug_plot:
+            plt.legend()
+            plt.ylabel("nash gap")
+            ax.set_yscale("log", nonpositive="mask")
+            plt.xlabel("iterations (of inner loop)")
+            plt.title("meta-game solution quality in final outer loop")
+            fn = os.path.join(save_path, key, "xdo_nash_gap_debug.png")
+            plt.savefig(fn, dpi=dpi, bbox_inches="tight")
         # plt.show()
         plt.close()
 
@@ -231,6 +245,7 @@ def main(game_name, tag, args, overwrite=False):
         "output",
         key,
     )
+    collect_mid_run_gaps = False
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     save_file = os.path.join(save_path, "xdo_metrics.pkl")
@@ -261,8 +276,12 @@ def main(game_name, tag, args, overwrite=False):
         RM = IRPRMPlus
     else:
         raise Exception(tag)
-    game = pyspiel.load_game(game_name, get_arg_dict(args=args))
 
+    arg_dict = get_arg_dict(args=args)
+    if arg_dict:
+        game = pyspiel.load_game(game_name, arg_dict)
+    else:
+        game = pyspiel.load_game(game_name)
     xdo = XDO(
         root_state=PyspielStateStructure(game.new_initial_state()),
         rm_class=RM,
@@ -279,7 +298,15 @@ def main(game_name, tag, args, overwrite=False):
     update_times = []
     nash_gaps = []
     expanded_infosets = []
+
+    update_times.append(0)
+    expanded_infos = xdo.count_infosets()
+    expanded_infosets.append(expanded_infos)
+
+    print("INITIAL expanded infosets", expanded_infos)
+
     i = 0
+    all_mid_run_gaps = []
     for ii in range(20):
         sum_sq_0 = dict()
         sum_sq_1 = dict()
@@ -289,7 +316,7 @@ def main(game_name, tag, args, overwrite=False):
         avg_sq_0 = None
         avg_sq_1 = None
         start = time.time()
-
+        mid_run_gaps = []
         for _ in range(1, 1500):
             i += 1
             bhv_0 = xdo.obtain_strategy(player=0)
@@ -313,6 +340,9 @@ def main(game_name, tag, args, overwrite=False):
                 i=i,
             )
             accumulated_weight += w
+            if collect_mid_run_gaps:
+                gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
+                mid_run_gaps.append(gap)
 
         update_times.append(time.time() - start)
         print("iteration", ii)
@@ -354,6 +384,7 @@ def main(game_name, tag, args, overwrite=False):
         print("p0 val, br val, improvement", value0, bru_0, bru_0 - value0)
         print("p1 val, br val, improvement", value1, bru_1, bru_1 - value1)
         print()
+        all_mid_run_gaps.append(mid_run_gaps)
     xdo.final_expansion()
     all_infosets = xdo.count_infosets()
 
@@ -362,6 +393,7 @@ def main(game_name, tag, args, overwrite=False):
         "conv": nash_gaps,
         "expanded_infosets": np.array(expanded_infosets),
         "all_infosets": np.array(all_infosets),
+        "all_mid_run_gaps": all_mid_run_gaps,
     }
     f = open(save_file, "wb")
     pickle.dump(metrics, f)
