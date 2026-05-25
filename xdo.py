@@ -138,6 +138,7 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
     plt.rcParams.update({"font.size": 13})
     dpi = 200
     key, title = key_and_title_from_args(args)
+    seeds = list(range(args.seed, args.seed + args.trials))
     DIR = os.path.dirname(__file__)
     save_path = os.path.join(
         DIR,
@@ -154,10 +155,12 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         if log_scale:
             ax.set_yscale("log", nonpositive="mask")
         for t in metrics:
-            convs = np.array([metrics[t][seed]["conv"] for seed in metrics[t].keys()])
+            t_keys = list(set(metrics[t].keys()).intersection(seeds))
+            if not t_keys:
+                continue
+            convs = np.array([metrics[t][seed]["conv"] for seed in t_keys])
             if clock_time:
-                temp_k = list(metrics[t].keys())[0]
-                plt.plot(metrics[t][temp_k]["times"][:-1], np.mean(convs, axis=0) / scale, label="XDO with " + t)
+                plt.plot(metrics[t][t_keys[0]]["times"][:-1], np.mean(convs, axis=0) / scale, label="XDO with " + t)
             else:
                 plt.plot(np.mean(convs, axis=0) / scale, label="XDO with " + label_map(t))
 
@@ -193,8 +196,11 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
 
         max_epoch = -float("inf")
         for t in metrics:
-            iss = np.array([metrics[t][seed]["expanded_infosets"] for seed in metrics[t].keys()])
-            ass = np.array([metrics[t][seed]["all_infosets"] for seed in metrics[t].keys()])
+            t_keys = list(set(metrics[t].keys()).intersection(seeds))
+            if not t_keys:
+                continue
+            iss = np.array([metrics[t][seed]["expanded_infosets"] for seed in t_keys])
+            ass = np.array([metrics[t][seed]["all_infosets"] for seed in t_keys])
             max_epoch = max(max_epoch, iss.shape[1] - 1)
             plt.plot(
                 np.sum(np.mean(iss, axis=0), axis=-1) / np.sum(np.mean(ass, axis=0), axis=-1), label="XDO with " + label_map(t)
@@ -214,7 +220,10 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         fig, ax = plt.subplots()
         save_debug_plot = False
         for t in metrics:
-            final_gaps = np.array([metrics[t][seed]["all_mid_run_gaps"][-1] for seed in metrics[t].keys()])
+            t_keys = list(set(metrics[t].keys()).intersection(seeds))
+            if not t_keys:
+                continue
+            final_gaps = np.array([metrics[t][seed]["all_mid_run_gaps"][-1] for seed in t_keys])
             if not len(final_gaps.flatten()):
                 continue
             else:
