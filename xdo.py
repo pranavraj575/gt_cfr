@@ -109,7 +109,7 @@ class XDO(GTCFR):
 
 
 def plt_all(game_name, args):
-    print("making plots for", game_name)
+    print("making plots for", args.experiment_name)
     for log_scale in False, True:
         for clock_time in True, False:
             plt_one(game_name, log_scale=log_scale, clock_time=clock_time, args=args)
@@ -300,6 +300,8 @@ def main(game_name, tag, args, overwrite=False):
 
         if seed in results:
             continue
+        if not updated:
+            print("running experiments for", args.experiment_name)
         updated = True
         root_state = PyspielStateStructure(game.new_initial_state())
         if "sanity_check" in args.experiment_name:
