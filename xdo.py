@@ -109,6 +109,7 @@ class XDO(GTCFR):
 
 
 def plt_all(game_name, args):
+    print("making plots for", game_name)
     for log_scale in False, True:
         for clock_time in True, False:
             plt_one(game_name, log_scale=log_scale, clock_time=clock_time, args=args)
@@ -190,7 +191,6 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
             "xdo_gtcfr_cmp_plt" + ("_log" if log_scale else "") + ("_clock" if clock_time else "") + ".png",
         )
         plt.savefig(fn, dpi=dpi, bbox_inches="tight")
-        print("saving to", fn)
         # plt.show()
         plt.close()
 
@@ -214,7 +214,6 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         plt.title(title + " infosets expanded")
         fn = os.path.join(save_path, key, "xdo_expansion_plt.png")
         plt.savefig(fn, dpi=dpi, bbox_inches="tight")
-        print("saving to", fn)
         plt.close()
 
         fig, ax = plt.subplots()
@@ -423,9 +422,11 @@ def main(game_name, tag, args, overwrite=False):
             "all_mid_run_gaps": all_mid_run_gaps,
         }
         all_metrics[tag] = results
+        print("saving to", save_file)
         f = open(save_file, "wb")
         pickle.dump(all_metrics, f)
         f.close()
+        print("saved")
     return updated
 
 
