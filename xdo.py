@@ -3,7 +3,7 @@ import pyspiel
 
 from regret_minimizer import RegretMinimizer, RegretMatchingPlus
 from gt_cfr import GTCFR, update_and_produce_avg_strats, PARENT_SEQUENCE, LEGAL_ACTIONS
-from state_structure import StateStructure
+from state_structure import StateStructure, DebugStateStructure
 
 RESTRICTED = "restricted_actions"
 
@@ -154,10 +154,12 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         if log_scale:
             ax.set_yscale("log", nonpositive="mask")
         for t in metrics:
+            convs = np.array([metrics[t][seed]["conv"] for seed in metrics[t].keys()])
             if clock_time:
-                plt.plot(metrics[t]["times"][:-1], np.array(metrics[t]["conv"]) / scale, label="XDO with " + t)
+                temp_k = list(metrics[t].keys())[0]
+                plt.plot(metrics[t][temp_k]["times"][:-1], np.mean(convs, axis=0) / scale, label="XDO with " + t)
             else:
-                plt.plot(np.array(metrics[t]["conv"]) / scale, label="XDO with " + label_map(t))
+                plt.plot(np.mean(convs, axis=0) / scale, label="XDO with " + label_map(t))
 
         save_file = os.path.join(save_path, key, "gtcfr_conv_by_time.npy")
         if os.path.exists(save_file):
@@ -191,10 +193,12 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
 
         max_epoch = -float("inf")
         for t in metrics:
-            iss = metrics[t]["expanded_infosets"]
-            ass = metrics[t]["all_infosets"]
-            max_epoch = max(max_epoch, len(iss) - 1)
-            plt.plot(np.sum(iss, axis=1) / np.sum(ass), label="XDO with " + label_map(t))
+            iss = np.array([metrics[t][seed]["expanded_infosets"] for seed in metrics[t].keys()])
+            ass = np.array([metrics[t][seed]["all_infosets"] for seed in metrics[t].keys()])
+            max_epoch = max(max_epoch, iss.shape[1] - 1)
+            plt.plot(
+                np.sum(np.mean(iss, axis=0), axis=-1) / np.sum(np.mean(ass, axis=0), axis=-1), label="XDO with " + label_map(t)
+            )
 
         plt.legend()
         plt.plot([0, max_epoch], [1, 1], linestyle="--", alpha=0.5)
@@ -210,12 +214,12 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
         fig, ax = plt.subplots()
         save_debug_plot = False
         for t in metrics:
-            final_gaps = metrics[t]["all_mid_run_gaps"][-1]
-            if not final_gaps:
+            final_gaps = np.array([metrics[t][seed]["all_mid_run_gaps"][-1] for seed in metrics[t].keys()])
+            if not len(final_gaps.flatten()):
                 continue
             else:
                 save_debug_plot = True
-                plt.plot(final_gaps, label="XDO with " + label_map(t))
+                plt.plot(np.mean(final_gaps, axis=0), label="XDO with " + label_map(t))
         if save_debug_plot:
             plt.legend()
             plt.ylabel("nash gap")
@@ -256,13 +260,11 @@ def main(game_name, tag, args, overwrite=False):
 
     if os.path.exists(save_file):
         f = open(save_file, "rb")
-        metrics = pickle.load(f)
+        all_metrics = pickle.load(f)
         f.close()
     else:
-        metrics = dict()
-
-    if (not overwrite) and tag in metrics:
-        return False
+        all_metrics = dict()
+    results = all_metrics.get(tag, dict())
 
     if tag == "RM":
         RM = RegretMatching
@@ -276,129 +278,146 @@ def main(game_name, tag, args, overwrite=False):
         RM = IRPRMPlus
     else:
         raise Exception(tag)
-
     arg_dict = get_arg_dict(args=args)
     if arg_dict:
         game = pyspiel.load_game(game_name, arg_dict)
     else:
         game = pyspiel.load_game(game_name)
-    xdo = XDO(
-        root_state=PyspielStateStructure(game.new_initial_state()),
-        rm_class=RM,
-    )
-    print("expanded nodes", xdo.count_nodes())
-    # should only be one available action per infoset
-    xdo.assert_regret_minimizers_have_correct_support(max_restricted_actions=1)
-    print(
-        xdo.constant_sum_nash_gap(
-            player_strategies={0: xdo.obtain_strategy(0), 1: xdo.obtain_strategy(1)},
-            sequential_form=False,
-        )
-    )
-    update_times = []
-    nash_gaps = []
-    expanded_infosets = []
+    updated = False
+    for seed in range(args.seed, args.seed + args.trials):
+        np.random.seed(seed)
 
-    update_times.append(0)
-    expanded_infos = xdo.count_infosets()
-    expanded_infosets.append(expanded_infos)
+        if overwrite and (seed in results):
+            results.pop(seed)
 
-    print("INITIAL expanded infosets", expanded_infos)
-
-    i = 0
-    all_mid_run_gaps = []
-    for ii in range(20):
-        sum_sq_0 = dict()
-        sum_sq_1 = dict()
-        accumulated_weight = 0.0
-        value0 = None
-        value1 = None
-        avg_sq_0 = None
-        avg_sq_1 = None
-        start = time.time()
-        mid_run_gaps = []
-        for _ in range(1, 1500):
-            i += 1
-            bhv_0 = xdo.obtain_strategy(player=0)
-            bhv_1 = xdo.obtain_strategy(player=1)
-            x0 = xdo.convert_to_sequence_form(player=0, behavioral_strat=bhv_0)
-            x1 = xdo.convert_to_sequence_form(player=1, behavioral_strat=bhv_1)
-
-            u0, obs_infosets0 = xdo.compute_utilities(player=0, other_player_strategies={1: bhv_1})
-            u1, obs_infosets1 = xdo.compute_utilities(player=1, other_player_strategies={0: bhv_0})
-            xdo.observe_utility(player=0, utility=u0, observed_infosets=obs_infosets0)
-            xdo.observe_utility(player=1, utility=u1, observed_infosets=obs_infosets1)
-            avg_sq_0, avg_sq_1, w = update_and_produce_avg_strats(
-                gtcfr=xdo,
-                accumulated_weight=accumulated_weight,
-                sum_sq_0=sum_sq_0,
-                sum_sq_1=sum_sq_1,
-                x0=x0,
-                x1=x1,
-                b0=bhv_0,
-                b1=bhv_1,
-                i=i,
+        if seed in results:
+            continue
+        updated = True
+        root_state = PyspielStateStructure(game.new_initial_state())
+        if "sanity_check" in args.experiment_name:
+            print("doing sanity check, adding bad actions")
+            root_state = DebugStateStructure(
+                state_struct=root_state,
+                negative_utlility=-10,
             )
-            accumulated_weight += w
-            if collect_mid_run_gaps:
-                gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
-                mid_run_gaps.append(gap)
-
-        update_times.append(time.time() - start)
-        print("iteration", ii)
-        value0 = xdo.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
-        value1 = xdo.compute_player_value(player=1, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
-        br0, bru_0 = xdo.best_response_strategy(
-            player=0,
-            other_player_strategies={1: xdo.obtain_strategy(1)},
-            sequential_form=False,
+        xdo = XDO(
+            root_state=root_state,
+            rm_class=RM,
         )
-        p0_updated = xdo.add_support_of_strategy(player=0, strategy=br0)
-        br1, bru_1 = xdo.best_response_strategy(
-            player=1,
-            other_player_strategies={0: xdo.obtain_strategy(0)},
-            sequential_form=False,
+        print("expanded nodes", xdo.count_nodes())
+        # should only be one available action per infoset
+        xdo.assert_regret_minimizers_have_correct_support(max_restricted_actions=1)
+        print(
+            xdo.constant_sum_nash_gap(
+                player_strategies={0: xdo.obtain_strategy(0), 1: xdo.obtain_strategy(1)},
+                sequential_form=False,
+            )
         )
-        p1_updated = xdo.add_support_of_strategy(player=1, strategy=br1)
-        any_updates = p0_updated or p1_updated
-        if any_updates:
-            xdo.reset_regret_minimizers(warm_start=1.0)
-            i = 0
-            # restart regret calculation from scratch, as there is a new restricted game
-        gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
-        nash_gaps.append(gap)
+        update_times = []
+        nash_gaps = []
+        expanded_infosets = []
 
+        update_times.append(0)
         expanded_infos = xdo.count_infosets()
         expanded_infosets.append(expanded_infos)
 
-        print(
-            "gap",
-            gap,
-            "time",
-            update_times[-1],
-            "expanded infosets",
-            expanded_infos,
-            "updates",
-            any_updates,
-        )
-        print("p0 val, br val, improvement", value0, bru_0, bru_0 - value0)
-        print("p1 val, br val, improvement", value1, bru_1, bru_1 - value1)
-        print()
-        all_mid_run_gaps.append(mid_run_gaps)
-    xdo.final_expansion()
-    all_infosets = xdo.count_infosets()
+        print("INITIAL expanded infosets", expanded_infos)
 
-    metrics[tag] = {
-        "times": np.cumsum(update_times),
-        "conv": nash_gaps,
-        "expanded_infosets": np.array(expanded_infosets),
-        "all_infosets": np.array(all_infosets),
-        "all_mid_run_gaps": all_mid_run_gaps,
-    }
-    f = open(save_file, "wb")
-    pickle.dump(metrics, f)
-    f.close()
-    return True
+        i = 0
+        all_mid_run_gaps = []
+        for ii in range(20):
+            sum_sq_0 = dict()
+            sum_sq_1 = dict()
+            accumulated_weight = 0.0
+            value0 = None
+            value1 = None
+            avg_sq_0 = None
+            avg_sq_1 = None
+            start = time.time()
+            mid_run_gaps = []
+            for _ in range(1, 1500):
+                i += 1
+                bhv_0 = xdo.obtain_strategy(player=0)
+                bhv_1 = xdo.obtain_strategy(player=1)
+                x0 = xdo.convert_to_sequence_form(player=0, behavioral_strat=bhv_0)
+                x1 = xdo.convert_to_sequence_form(player=1, behavioral_strat=bhv_1)
+
+                u0, obs_infosets0 = xdo.compute_utilities(player=0, other_player_strategies={1: bhv_1})
+                u1, obs_infosets1 = xdo.compute_utilities(player=1, other_player_strategies={0: bhv_0})
+                xdo.observe_utility(player=0, utility=u0, observed_infosets=obs_infosets0)
+                xdo.observe_utility(player=1, utility=u1, observed_infosets=obs_infosets1)
+                avg_sq_0, avg_sq_1, w = update_and_produce_avg_strats(
+                    gtcfr=xdo,
+                    accumulated_weight=accumulated_weight,
+                    sum_sq_0=sum_sq_0,
+                    sum_sq_1=sum_sq_1,
+                    x0=x0,
+                    x1=x1,
+                    b0=bhv_0,
+                    b1=bhv_1,
+                    i=i,
+                )
+                accumulated_weight += w
+                if collect_mid_run_gaps:
+                    gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
+                    mid_run_gaps.append(gap)
+
+            update_times.append(time.time() - start)
+            print("iteration", ii)
+            value0 = xdo.compute_player_value(player=0, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
+            value1 = xdo.compute_player_value(player=1, player_sequential_strategies={0: avg_sq_0, 1: avg_sq_1})
+            br0, bru_0 = xdo.best_response_strategy(
+                player=0,
+                other_player_strategies={1: xdo.obtain_strategy(1)},
+                sequential_form=False,
+            )
+            p0_updated = xdo.add_support_of_strategy(player=0, strategy=br0)
+            br1, bru_1 = xdo.best_response_strategy(
+                player=1,
+                other_player_strategies={0: xdo.obtain_strategy(0)},
+                sequential_form=False,
+            )
+            p1_updated = xdo.add_support_of_strategy(player=1, strategy=br1)
+            any_updates = p0_updated or p1_updated
+            if any_updates:
+                xdo.reset_regret_minimizers(warm_start=1.0)
+                i = 0
+                # restart regret calculation from scratch, as there is a new restricted game
+            gap = xdo.constant_sum_nash_gap(player_strategies={0: avg_sq_0, 1: avg_sq_1}, sequential_form=True)
+            nash_gaps.append(gap)
+
+            expanded_infos = xdo.count_infosets()
+            expanded_infosets.append(expanded_infos)
+
+            print(
+                "gap",
+                gap,
+                "time",
+                update_times[-1],
+                "expanded infosets",
+                expanded_infos,
+                "updates",
+                any_updates,
+            )
+            print("p0 val, br val, improvement", value0, bru_0, bru_0 - value0)
+            print("p1 val, br val, improvement", value1, bru_1, bru_1 - value1)
+            print()
+            all_mid_run_gaps.append(mid_run_gaps)
+        xdo.final_expansion()
+        all_infosets = xdo.count_infosets()
+
+        results[seed] = {
+            "times": np.cumsum(update_times),
+            "conv": nash_gaps,
+            "expanded_infosets": np.array(expanded_infosets),
+            "all_infosets": np.array(all_infosets),
+            "all_mid_run_gaps": all_mid_run_gaps,
+        }
+        all_metrics[tag] = results
+        f = open(save_file, "wb")
+        pickle.dump(all_metrics, f)
+        f.close()
+    return updated
 
 
 if __name__ == "__main__":
@@ -426,6 +445,20 @@ if __name__ == "__main__":
         default=[],
         help="args for the game",
     )
+    parser.add_argument(
+        "--seed",
+        required=False,
+        type=int,
+        default=21,
+        help="random seed",
+    )
+    parser.add_argument(
+        "--trials",
+        required=False,
+        type=int,
+        default=1,
+        help="number of triels to run",
+    )
     args = parser.parse_args()
 
     overwrite = False
@@ -443,7 +476,6 @@ if __name__ == "__main__":
 
     plt_all(game_name=game_name, args=args)
     for tag in tags:
-        np.random.seed(21)
         written = main(game_name, tag=tag, overwrite=overwrite, args=args)
         if written:
             plt_all(game_name=game_name, args=args)
