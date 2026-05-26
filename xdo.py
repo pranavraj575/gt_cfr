@@ -300,8 +300,7 @@ def main(game_name, tag, args, overwrite=False):
 
         if seed in results:
             continue
-        if not updated:
-            print("running experiments for", args.experiment_name)
+        print("running experiments for", args.experiment_name, "seed", seed)
         updated = True
         root_state = PyspielStateStructure(game.new_initial_state())
         if "sanity_check" in args.experiment_name:
