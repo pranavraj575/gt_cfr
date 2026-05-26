@@ -288,9 +288,9 @@ def main(game_name, tag, args, overwrite=False):
         raise Exception(tag)
     arg_dict = get_arg_dict(args=args)
     if arg_dict:
-        game = pyspiel.load_game(game_name, arg_dict)
+        game = pyspiel.load_game(game_name.strip('"'), arg_dict)
     else:
-        game = pyspiel.load_game(game_name)
+        game = pyspiel.load_game(game_name.strip('"'))
     updated = False
     for seed in range(args.seed, args.seed + args.trials):
         np.random.seed(seed)
