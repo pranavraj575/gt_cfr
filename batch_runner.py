@@ -6,6 +6,8 @@ with open(fn) as f:
     for line in f.read().split("\n"):
         if line.startswith(start):
             args = line[len(start) :].strip().strip(";")
-            command = f"sbatch {os.path.join(os.path.dirname(__file__), 'output', 'run_experiment.sh')} {args}"
+            command = (
+                f"sbatch {os.path.join(os.path.dirname(__file__), 'output', 'run_experiment.sh')} {args.replace('"', '\\"')}"
+            )
             print(command)
             os.system(command)
