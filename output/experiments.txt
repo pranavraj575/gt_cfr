@@ -9,7 +9,6 @@ python xdo.py --game universal_poker --experiment-name "universal_poker_small_de
 python xdo.py --game universal_poker --experiment-name "universal_poker_small_deck_3_rounds" --arg numRanks 3 --arg numSuits 2 --arg numBoardCards "0 1 1" --arg numRounds 3 --trials 10;
 python xdo.py --game universal_poker --experiment-name "universal_poker_fine_abstraction_8" --arg numRanks 3 --arg numSuits 2 --arg stack "8 8" --arg blind "1 1" --arg bettingAbstraction fullgame --trials 10;
 python xdo.py --game universal_poker --experiment-name "universal_poker_fine_abstraction_10" --arg numRanks 3 --arg numSuits 2 --arg stack "10 10" --arg blind "1 1" --arg bettingAbstraction fullgame --trials 10;
-python xdo.py --game "universal_poker(numRanks=3,numSuits=2,stack=10 10,blind=1 1,bettingAbstraction=fullgame)" --experiment-name "universal_poker_fine_abstraction_10" --trials 10;
 python xdo.py --game universal_poker --experiment-name "universal_poker" --trials 10;
 python xdo.py --game universal_poker --experiment-name "universal_poker_small_deck_2_hole" --arg numRanks 3 --arg numSuits 2 --arg numHoleCards 2 --trials 10;
 

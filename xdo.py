@@ -120,9 +120,8 @@ def key_and_title_from_args(args):
         key = game_name
         title = game_name
     else:
-        exp_name=args.experiment_name.strip('"')
-        key = exp_name.replace(" ", "_").replace("(", "").replace(")", "")
-        title = exp_name
+        key = args.experiment_name.replace(" ", "_").replace("(", "").replace(")", "")
+        title = args.experiment_name
     return key, title
 
 
