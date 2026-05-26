@@ -5,6 +5,8 @@
 #SBATCH --mem=48G
 #SBATCH --exclude=marvel-0-29,marvel-1-[19,21,23,25,27]
 
+echo python xdo.py $1
+
 source ~/.bashrc
 conda activate gt_cfr
-python xdo.py $@
+python xdo.py $1
