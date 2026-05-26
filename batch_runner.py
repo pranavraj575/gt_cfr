@@ -7,4 +7,5 @@ with open(fn) as f:
         if line.startswith(start):
             args = line[len(start) :].strip().strip(";")
             command = f"sbatch {os.path.join(os.path.dirname(__file__), 'output', 'run_experiment.sh')} {args}"
+            print(command)
             os.system(command)
