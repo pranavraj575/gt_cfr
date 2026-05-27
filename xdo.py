@@ -161,7 +161,7 @@ def plt_one(game_name, args, log_scale=False, clock_time=False):
                 continue
             convs = np.array([metrics[t][seed]["conv"] for seed in t_keys])
             if clock_time:
-                plt.plot(metrics[t][t_keys[0]]["times"][:-1], np.mean(convs, axis=0) / scale, label="XDO with " + t)
+                plt.plot(metrics[t][t_keys[0]]["times"][:-1], np.mean(convs, axis=0) / scale, label="XDO with " + label_map(t))
             else:
                 plt.plot(np.mean(convs, axis=0) / scale, label="XDO with " + label_map(t))
 
